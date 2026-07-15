@@ -139,34 +139,56 @@ function projectFromGit(git) {
   return m ? m[1] : null;
 }
 
-// Read the session_meta line (first line) for id, cwd, and git remote. The
-// project label is the git repo name when the thread is in a repo, else the
-// cwd basename. Cached per file.
+// Compact a first-user-message into a label: strip markdown links/urls/
+// punctuation, collapse whitespace, cap length.
+function cleanSnippet(msg) {
+  return String(msg)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // [text](url) -> text
+    .replace(/https?:\/\/\S+/g, '')          // bare urls
+    .replace(/[`*_#>]/g, '')                 // markdown punctuation
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48);
+}
+
+// Read the rollout for id, cwd, and label. Label = git repo name when the
+// thread is in a repo (available on the first session_meta line, so we can
+// stop immediately); otherwise, for scratch-dir threads, keep reading to the
+// first real user message and use that snippet. Cached per file.
 function readCodexMeta(file) {
   return new Promise((resolve) => {
     const fallbackId = path.basename(file, '.jsonl').replace(/^rollout-[\dT-]+-(?=[0-9a-f])/, '');
-    let settled = false;
+    let id = '', cwd = '', gitProject = null, snippet = '', lines = 0, settled = false;
     const stream = fs.createReadStream(file, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const done = (id, cwd, git) => {
+    const finish = () => {
       if (settled) return;
       settled = true;
       rl.close();
       stream.destroy();
-      const project = projectFromGit(git) || (cwd ? path.basename(cwd) : 'thread');
-      resolve({ id: id || fallbackId, cwd, project, title: project });
+      const project = gitProject || (cwd ? path.basename(cwd) : 'thread');
+      // repo threads: repo name; scratch dirs: first-message snippet, else dir
+      const title = gitProject ? project : (snippet || project);
+      resolve({ id: id || fallbackId, cwd, project, title });
     };
     rl.on('line', (line) => {
       if (settled) return;
-      try {
-        const o = JSON.parse(line);
-        const p = o.payload ?? o;
-        done(p.session_id || p.id, p.cwd || '', p.git);
-      } catch {
-        done(null, '', null);
+      if (++lines > 600) return finish(); // bound work on huge transcripts
+      let o;
+      try { o = JSON.parse(line); } catch { return; }
+      const p = o.payload ?? o;
+      if (o.type === 'session_meta' || p.session_id) {
+        id = p.session_id || p.id || id;
+        cwd = p.cwd || cwd;
+        gitProject = projectFromGit(p.git);
+        if (gitProject) return finish(); // in a repo — no need to read further
+      }
+      if (!snippet && o.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') {
+        snippet = cleanSnippet(p.message);
+        if (snippet) return finish();
       }
     });
-    rl.on('close', () => done(null, '', null));
-    rl.on('error', () => done(null, '', null));
+    rl.on('close', finish);
+    rl.on('error', finish);
   });
 }

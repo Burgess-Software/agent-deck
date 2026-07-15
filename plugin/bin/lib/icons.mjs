@@ -1,5 +1,5 @@
 // Runtime key images (72x72 PNG data URIs). Text goes on top via setTitle,
-// so these render the status color field, app badge, and simple glyphs.
+// so these render the status color field and simple glyphs.
 import { Canvas, hex } from './png.mjs';
 
 export const STATUS_COLORS = {
@@ -11,10 +11,7 @@ export const STATUS_COLORS = {
   empty: '#1b1e26',
 };
 
-export const APP_COLORS = {
-  claude: '#d97757', // Anthropic clay
-  codex: '#e8e8e3',  // Codex off-white
-};
+const ACCENT = '#e8e8e3'; // Codex off-white
 
 const S = 72;
 
@@ -25,20 +22,13 @@ function base(bg) {
   return c;
 }
 
-function appBadge(c, app) {
-  if (!app) return;
-  c.fillCircle(12, 12, 6, hex(APP_COLORS[app]));
-  if (app === 'codex') c.fillCircle(12, 12, 2, hex('#111318'));
-}
-
-/** Agent status key: colored field + app badge + status glyph. */
-export function agentKey({ status = 'empty', app = null, dim = false } = {}) {
+/** Agent status key: colored field + status glyph. */
+export function agentKey({ status = 'empty', dim = false } = {}) {
   const color = STATUS_COLORS[status] ?? STATUS_COLORS.idle;
   let [r, g, b] = hex(color);
   if (dim) { r = Math.round(r * 0.55); g = Math.round(g * 0.55); b = Math.round(b * 0.55); }
   const c = base('#111318');
   c.fillRoundRect(3, 3, S - 6, S - 6, 12, [r, g, b, 255]);
-  appBadge(c, app);
   const ink = status === 'idle' || status === 'empty' ? hex('#8a8f9c') : hex('#111318');
   const cx = S / 2, cy = 30;
   if (status === 'working') {
@@ -47,7 +37,7 @@ export function agentKey({ status = 'empty', app = null, dim = false } = {}) {
     c.fillCircle(cx, cy, 4, ink);
     c.fillCircle(cx + 14, cy, 4, ink);
   } else if (status === 'needs_input') {
-    // question-ish: hollow circle + dot
+    // hollow circle + dot
     c.fillCircle(cx, cy - 4, 9, ink);
     c.fillCircle(cx, cy - 4, 5, [r, g, b, 255]);
     c.fillCircle(cx, cy + 12, 3, ink);
@@ -70,32 +60,21 @@ export function agentKey({ status = 'empty', app = null, dim = false } = {}) {
   return c.toDataURI();
 }
 
-/** Command / skill key: dark tile + app badge + accent bar. */
-export function commandKey({ app = null, accent = '#f7821b' } = {}) {
+/** Command / skill key: dark tile + accent bar. */
+export function commandKey({ accent = '#f7821b' } = {}) {
   const c = base('#262a34');
-  appBadge(c, app);
   c.fillRoundRect(14, 26, S - 28, 8, 4, hex(accent));
   return c.toDataURI();
 }
 
 /** Reasoning dial: gauge arc filled to level. */
-export function reasoningKey({ app = 'claude', frac = 1 } = {}) {
+export function reasoningKey({ frac = 1 } = {}) {
   const c = base('#262a34');
-  appBadge(c, app);
   const cx = S / 2, cy = 38;
   // background ring (upper half: angles 180..360 in atan2-space)
   c.ringSegment(cx, cy, 20, 13, 180, 360, hex('#3a3f4b'));
   const sweep = Math.max(4, Math.round(180 * frac));
-  c.ringSegment(cx, cy, 20, 13, 180, 180 + sweep, hex(APP_COLORS[app]));
-  return c.toDataURI();
-}
-
-/** Target toggle key: big app badge. */
-export function targetKey({ app = 'claude' } = {}) {
-  const c = base('#262a34');
-  const color = hex(APP_COLORS[app]);
-  c.fillCircle(S / 2, 30, 14, color);
-  if (app === 'codex') c.fillCircle(S / 2, 30, 5, hex('#262a34'));
+  c.ringSegment(cx, cy, 20, 13, 180, 180 + sweep, hex(ACCENT));
   return c.toDataURI();
 }
 
@@ -109,7 +88,7 @@ export function manifestIcon(kind, size = 144) {
     c.fillCircle(cx - 14 * u, cy - 14 * u, 7 * u, hex('#f7821b'));
     c.fillCircle(cx + 14 * u, cy - 14 * u, 7 * u, hex('#27ae60'));
     c.fillCircle(cx - 14 * u, cy + 14 * u, 7 * u, hex('#3d8bfd'));
-    c.fillCircle(cx + 14 * u, cy + 14 * u, 7 * u, hex('#d97757'));
+    c.fillCircle(cx + 14 * u, cy + 14 * u, 7 * u, hex('#e8e8e3'));
   } else if (kind === 'command') {
     for (let i = 0; i < 10 * u; i++) c.fillRect(cx - 16 * u + i, cy + 2 * u + i * 0.8, 4 * u, 4 * u, hex('#27ae60'));
     for (let i = 0; i < 18 * u; i++) c.fillRect(cx - 6 * u + i, cy + 10 * u - i * 0.8, 4 * u, 4 * u, hex('#27ae60'));
@@ -121,10 +100,6 @@ export function manifestIcon(kind, size = 144) {
   } else if (kind === 'reasoning') {
     c.ringSegment(cx, cy + 8 * u, 22 * u, 14 * u, 180, 360, hex('#3a3f4b'));
     c.ringSegment(cx, cy + 8 * u, 22 * u, 14 * u, 180, 320, hex('#3d8bfd'));
-  } else if (kind === 'target') {
-    c.fillCircle(cx - 12 * u, cy, 10 * u, hex('#d97757'));
-    c.fillCircle(cx + 12 * u, cy, 10 * u, hex('#e8e8e3'));
-    c.fillCircle(cx + 12 * u, cy, 4 * u, hex('#262a34'));
   }
   return c.toPNG();
 }

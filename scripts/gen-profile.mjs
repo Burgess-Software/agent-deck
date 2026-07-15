@@ -22,7 +22,6 @@ const ACTIONS = {
   command:   { name: 'Command Key',      icon: 'icons/command',   pi: 'pi/command.html' },
   skill:     { name: 'Skill Key',        icon: 'icons/skill',     pi: 'pi/skill.html' },
   reasoning: { name: 'Reasoning Dial',   icon: 'icons/reasoning', pi: 'pi/reasoning.html' },
-  target:    { name: 'Target App Toggle',icon: 'icons/target',    pi: 'pi/target.html' },
 };
 
 function instance(kind, position, settings) {
@@ -60,7 +59,7 @@ const keys = [
   instance('command', 6, { command: 'reject' }),
   instance('command', 7, { command: 'newchat' }),
   instance('command', 8, { command: 'ptt' }),
-  instance('target', 9, {}),
+  instance('command', 9, { command: 'interrupt' }),
   instance('skill', 10, { skill: 'review' }),
   instance('skill', 11, { skill: 'debug' }),
   instance('skill', 12, { skill: 'refactor' }),

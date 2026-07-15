@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Agent Deck installer:
 //  1. generates the manifest PNG icons
-//  2. symlinks the plugin into OpenDeck's plugin directory
-//  3. merges the status hooks into ~/.claude/settings.json (backup kept)
-//  4. wires notify into ~/.codex/config.toml (backup kept)
+//  2. copies the plugin into OpenDeck's plugin directory
+//  3. wires notify into ~/.codex/config.toml (backup kept)
+//  4. removes any agent-deck hooks a previous (Claude-supporting) version
+//     added to ~/.claude/settings.json
 // Idempotent: safe to re-run.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,8 +17,6 @@ const PLUGIN_UUID = 'com.thomasburgess.agentdeck';
 const OPENDECK_PLUGINS = path.join(os.homedir(), '.config/opendeck/plugins');
 const CLAUDE_SETTINGS = path.join(os.homedir(), '.claude/settings.json');
 const CODEX_CONFIG = path.join(os.homedir(), '.codex/config.toml');
-// Absolute node path: hooks run from the desktop app, whose PATH lacks nvm.
-const HOOK_CMD = `${process.execPath} ${path.join(PLUGIN_SRC, 'hooks/claude-hook.mjs')}`;
 const NOTIFY_PATH = path.join(PLUGIN_SRC, 'hooks/codex-notify.mjs');
 const STAMP = new Date().toISOString().slice(0, 10);
 
@@ -27,10 +26,12 @@ const log = (m) => console.log(`[agent-deck] ${m}`);
 const { manifestIcon } = await import(path.join(PLUGIN_SRC, 'bin/lib/icons.mjs'));
 const iconDir = path.join(PLUGIN_SRC, 'icons');
 fs.mkdirSync(iconDir, { recursive: true });
-for (const kind of ['plugin', 'agent', 'command', 'skill', 'reasoning', 'target']) {
+for (const kind of ['plugin', 'agent', 'command', 'skill', 'reasoning']) {
   fs.writeFileSync(path.join(iconDir, `${kind}.png`), manifestIcon(kind, 144));
   fs.writeFileSync(path.join(iconDir, `${kind}@2x.png`), manifestIcon(kind, 288));
 }
+fs.rmSync(path.join(iconDir, 'target.png'), { force: true });
+fs.rmSync(path.join(iconDir, 'target@2x.png'), { force: true });
 log('icons generated');
 
 // 2. copy into OpenDeck (a symlink won't do: OpenDeck canonicalizes the path
@@ -43,28 +44,7 @@ fs.chmodSync(path.join(dest, 'agentdeck.sh'), 0o755);
 fs.chmodSync(path.join(PLUGIN_SRC, 'agentdeck.sh'), 0o755);
 log(`installed ${dest}`);
 
-// 3. Claude hooks
-const settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, 'utf8'));
-settings.hooks ??= {};
-let claudeChanged = false;
-for (const event of ['SessionStart', 'UserPromptSubmit', 'Notification', 'Stop', 'SessionEnd']) {
-  settings.hooks[event] ??= [];
-  const present = settings.hooks[event].some((entry) =>
-    (entry.hooks ?? []).some((h) => (h.command ?? '').includes('agent-deck')));
-  if (!present) {
-    settings.hooks[event].push({ hooks: [{ type: 'command', command: HOOK_CMD, timeout: 10 }] });
-    claudeChanged = true;
-  }
-}
-if (claudeChanged) {
-  fs.copyFileSync(CLAUDE_SETTINGS, `${CLAUDE_SETTINGS}.bak-agentdeck-${STAMP}`);
-  fs.writeFileSync(CLAUDE_SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
-  log(`claude hooks installed (backup: settings.json.bak-agentdeck-${STAMP})`);
-} else {
-  log('claude hooks already installed');
-}
-
-// 4. Codex notify (top-level key: must precede the first [table] header)
+// 3. Codex notify (top-level key: must precede the first [table] header)
 let toml = fs.readFileSync(CODEX_CONFIG, 'utf8');
 if (toml.includes('agent-deck')) {
   log('codex notify already installed');
@@ -82,11 +62,26 @@ if (toml.includes('agent-deck')) {
   log(`codex notify installed (backup: config.toml.bak-agentdeck-${STAMP})`);
 }
 
+// 4. remove agent-deck hooks from ~/.claude/settings.json (older versions)
+try {
+  const settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, 'utf8'));
+  let removed = false;
+  for (const [event, arr] of Object.entries(settings.hooks ?? {})) {
+    const kept = arr.filter((entry) =>
+      !(entry.hooks ?? []).some((h) => (h.command ?? '').includes('agent-deck')));
+    if (kept.length !== arr.length) removed = true;
+    if (kept.length === 0) delete settings.hooks[event];
+    else settings.hooks[event] = kept;
+  }
+  if (removed) {
+    fs.copyFileSync(CLAUDE_SETTINGS, `${CLAUDE_SETTINGS}.bak-agentdeck-${STAMP}`);
+    fs.writeFileSync(CLAUDE_SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
+    log('removed old agent-deck hooks from ~/.claude/settings.json');
+  }
+} catch { /* no claude settings — nothing to clean */ }
+
 // 5. state dir
-const stateDir = path.join(os.homedir(), '.local/share/agentdeck');
-fs.mkdirSync(path.join(stateDir, 'state/claude'), { recursive: true });
-fs.mkdirSync(path.join(stateDir, 'state/codex'), { recursive: true });
-if (!fs.existsSync(path.join(stateDir, 'target'))) {
-  fs.writeFileSync(path.join(stateDir, 'target'), 'claude');
-}
+fs.mkdirSync(path.join(os.homedir(), '.local/share/agentdeck/state/codex'), { recursive: true });
+fs.rmSync(path.join(os.homedir(), '.local/share/agentdeck/state/claude'), { recursive: true, force: true });
+fs.rmSync(path.join(os.homedir(), '.local/share/agentdeck/target'), { force: true });
 log('done — restart OpenDeck to load the plugin');

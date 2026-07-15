@@ -1,21 +1,9 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
 <body>
-  <label>App</label>
-  <select data-setting="app">
-    <option value="">Follow target toggle</option>
-    <option value="claude">Claude Code</option>
-    <option value="codex">Codex</option>
-  </select>
   <div class="hint">
-    Press (or rotate, on a Stream Deck +) to cycle reasoning effort.
-    Claude Code: <code>effortLevel</code> low → medium → high.
-    Codex: <code>model_reasoning_effort</code> minimal → low → medium → high.
+    Press (or rotate, on a Stream Deck +) to cycle Codex reasoning effort:
+    <code>model_reasoning_effort</code> minimal → low → medium → high.
     Applies to new sessions.
   </div>
-  <script>
-    const form = bindForm();
-    window.onPIReady = (s) => form.load(s);
-    window.onSettings = (s) => form.load(s);
-  </script>
 </body></html>

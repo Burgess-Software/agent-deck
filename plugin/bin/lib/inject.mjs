@@ -151,6 +151,13 @@ export function runShell(command) {
   });
 }
 
+/** Open a deep link (claude:// or codex://) via the desktop's URI handlers. */
+export function openUri(uri) {
+  return new Promise((resolve) => {
+    execFile('xdg-open', [uri], { timeout: 10000 }, (err) => resolve(!err));
+  });
+}
+
 /** Launch the app if it has no window; returns after focusing either way. */
 export async function focusOrLaunch(app, captionSubstr = '') {
   const ok = await focusWindow(APP_WINDOW_CLASS[app], captionSubstr);

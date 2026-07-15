@@ -4,7 +4,7 @@ import { StreamDeck, parseArgs } from './lib/protocol.mjs';
 import { AgentState } from './lib/state.mjs';
 import * as icons from './lib/icons.mjs';
 import * as reasoning from './lib/reasoning.mjs';
-import { focusOrLaunch, sendKeys, pasteText, runShell } from './lib/inject.mjs';
+import { focusOrLaunch, sendKeys, pasteText, runShell, openUri } from './lib/inject.mjs';
 
 const PREFIX = 'com.thomasburgess.agentdeck';
 
@@ -119,7 +119,17 @@ function renderAll(kinds = null) {
 async function pressAgent(context, settings) {
   const app = appFor(settings);
   const s = sessionForSlot(app, Number(settings?.slot ?? 0));
-  await focusOrLaunch(app, s?.project ?? '');
+  if (s) {
+    // Switch to the specific chat via the app's deep link scheme, then make
+    // sure the window is focused (Wayland blocks apps raising themselves).
+    const uri = app === 'claude'
+      ? `claude://resume?session=${s.id}`
+      : `codex://threads/${s.id}`;
+    console.log(`agent key: opening ${uri}`);
+    await openUri(uri);
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  await focusOrLaunch(app, '');
 }
 
 async function pressCommand(context, settings) {

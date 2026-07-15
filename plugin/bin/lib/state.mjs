@@ -9,6 +9,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -121,7 +122,7 @@ export class AgentState extends EventEmitter {
         status,
         cwd: meta.cwd,
         project: meta.cwd ? path.basename(meta.cwd) : '?',
-        title: meta.cwd ? path.basename(meta.cwd) : 'thread',
+        title: meta.title,
         ts: stat.mtimeMs,
       });
     }
@@ -130,27 +131,56 @@ export class AgentState extends EventEmitter {
   }
 }
 
-async function readCodexMeta(file) {
-  try {
-    // The session_meta line embeds the full base instructions, so it can be
-    // tens of KB. Read a generous chunk and try full parse, then fall back
-    // to plucking the two fields we need out of the raw text.
-    const fh = await fsp.open(file, 'r');
-    const buf = Buffer.alloc(256 * 1024);
-    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-    await fh.close();
-    const head = buf.subarray(0, bytesRead).toString('utf8');
+// Turn a raw first-user-message into a compact thread title, mirroring what
+// the Codex app shows. Strips markdown links/urls/punctuation and collapses
+// whitespace. Result is cached per file (first message never changes).
+function cleanTitle(msg) {
+  return String(msg)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // [text](url) -> text
+    .replace(/https?:\/\/\S+/g, '')          // bare urls
+    .replace(/[`*_#>]/g, '')                 // markdown punctuation
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48);
+}
+
+// Stream the rollout to pull the session id + cwd (from the session_meta line)
+// and the first real user message (an event_msg of type "user_message" — the
+// clean message, not the system-injected context items). Stops as soon as it
+// has the title, or after a bounded number of lines.
+function readCodexMeta(file) {
+  return new Promise((resolve) => {
     const fallbackId = path.basename(file, '.jsonl').replace(/^rollout-[\dT-]+-(?=[0-9a-f])/, '');
-    try {
-      const parsed = JSON.parse(head.split('\n')[0]);
-      const payload = parsed.payload ?? parsed;
-      return { id: payload.session_id || payload.id || fallbackId, cwd: payload.cwd || '' };
-    } catch {
-      const id = head.match(/"session_id"\s*:\s*"([^"]+)"/)?.[1] || fallbackId;
-      const cwd = head.match(/"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] || '';
-      return { id, cwd: cwd.replace(/\\(.)/g, '$1') };
-    }
-  } catch {
-    return null;
-  }
+    let id = '', cwd = '', title = '', lines = 0, settled = false;
+    const stream = fs.createReadStream(file, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      stream.destroy();
+      resolve({
+        id: id || fallbackId,
+        cwd,
+        title: title || (cwd ? path.basename(cwd) : 'thread'),
+      });
+    };
+    rl.on('line', (line) => {
+      if (settled) return;
+      if (++lines > 600) return finish(); // bound work on huge transcripts
+      let o;
+      try { o = JSON.parse(line); } catch { return; }
+      const p = o.payload ?? o;
+      if (o.type === 'session_meta' || p.session_id) {
+        id = p.session_id || p.id || id;
+        cwd = p.cwd || cwd;
+      }
+      if (!title && o.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') {
+        title = cleanTitle(p.message);
+        if (title) return finish();
+      }
+    });
+    rl.on('close', finish);
+    rl.on('error', finish);
+  });
 }

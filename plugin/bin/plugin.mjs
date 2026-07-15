@@ -45,6 +45,33 @@ let pulse = false; // blink phase for "working"
 
 // ---------- rendering ----------
 
+// Fit a label into two short lines (<= ~8 chars each) so OpenDeck's centered
+// title never overflows and clips. Breaks on a word boundary when possible.
+function wrapLabel(text, width = 8, maxLines = 2) {
+  const words = String(text).trim().split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if (!cur) cur = w;
+    else if ((cur + ' ' + w).length <= width) cur += ' ' + w;
+    else { lines.push(cur); cur = w; }
+    if (lines.length >= maxLines) break;
+    // a single word longer than width: hard-split it
+    while (cur.length > width && lines.length < maxLines) {
+      lines.push(cur.slice(0, width));
+      cur = cur.slice(width);
+    }
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  const out = lines.slice(0, maxLines);
+  // mark truncation if we ran out of room
+  if (out.length === maxLines) {
+    const used = out.join(' ').length;
+    if (used < String(text).trim().length) out[maxLines - 1] = `${out[maxLines - 1].slice(0, width - 1)}…`;
+  }
+  return out.join('\n');
+}
+
 function renderAgent(context, settings) {
   const slot = Number(settings?.slot ?? 0);
   const s = state.get()[slot] ?? null;
@@ -55,9 +82,9 @@ function renderAgent(context, settings) {
   }
   const dim = s.status === 'working' && pulse;
   sd.setImage(context, icons.agentKey({ status: s.status, dim }));
-  const name = s.title || s.project;
-  const label = name.length > 9 ? `${name.slice(0, 8)}…` : name;
-  sd.setTitle(context, `\n\n\n${label}`);
+  // OpenDeck center-clips titles past ~8 chars at the default font size, so
+  // wrap onto two short lines instead of one overflowing line.
+  sd.setTitle(context, `\n\n${wrapLabel(s.title || s.project)}`);
 }
 
 function renderCommand(context, settings) {

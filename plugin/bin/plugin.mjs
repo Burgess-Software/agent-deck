@@ -4,13 +4,9 @@
 import { StreamDeck, parseArgs } from './lib/protocol.mjs';
 import { AgentState } from './lib/state.mjs';
 import * as icons from './lib/icons.mjs';
+import * as reasoning from './lib/reasoning.mjs';
 import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
 
-// Default shortcut the reasoning key sends. Bind this to "Cycle reasoning
-// effort" in Codex → Settings → Keyboard Shortcuts (it has no default). NOT
-// ctrl+alt+r — that's Codex's built-in "Rename task". The increase/decrease
-// variants are used by an encoder's rotation if bound.
-const DEFAULT_REASONING_CYCLE = 'ctrl+alt+e';
 // Codex's built-in "open model picker" shortcut (no setup needed).
 const MODEL_PICKER_KEYS = 'ctrl+shift+m';
 
@@ -106,12 +102,13 @@ function renderSkill(context, settings) {
   sd.setTitle(context, `\n\n${wrapLabel(settings?.label || preset.title)}`);
 }
 
-function renderReasoning(context, settings) {
-  // The current level lives in Codex's UI state, not a file we can read, so
-  // the key is a stateless "nudge" (like the hardware dial) rather than a
-  // gauge. Show a neutral dial glyph + label.
-  sd.setImage(context, icons.reasoningKey({ frac: 0.6 }));
-  sd.setTitle(context, `\n\n${wrapLabel(settings?.label || 'Reason')}`);
+function renderReasoning(context) {
+  const levels = reasoning.LEVELS;
+  const level = reasoning.getLevel();
+  const idx = levels.indexOf(level);
+  const frac = idx >= 0 ? (idx + 1) / levels.length : 0.5;
+  sd.setImage(context, icons.reasoningKey({ frac }));
+  sd.setTitle(context, `\n\n${wrapLabel(reasoning.label(level))}`);
 }
 
 function renderModel(context, settings) {
@@ -134,7 +131,7 @@ function render(context) {
     if (kind === 'agent') renderAgent(context, inst.settings);
     else if (kind === 'command') renderCommand(context, inst.settings);
     else if (kind === 'skill') renderSkill(context, inst.settings);
-    else if (kind === 'reasoning') renderReasoning(context, inst.settings);
+    else if (kind === 'reasoning') renderReasoning(context);
     else if (kind === 'model') renderModel(context, inst.settings);
     else if (kind === 'usage') renderUsage(context, inst.settings);
   } catch (e) {
@@ -207,16 +204,10 @@ async function pressUsage(context) {
   sd.showOk(context);
 }
 
-async function pressReasoning(context, settings, direction = 0) {
-  // direction 0 = cycle (key press), +1 = increase, -1 = decrease (encoder).
-  const cycle = settings?.cycleKeys || DEFAULT_REASONING_CYCLE;
-  const keys = direction > 0 ? (settings?.upKeys || cycle)
-    : direction < 0 ? (settings?.downKeys || cycle)
-    : cycle;
-  await focusOrLaunch('codex');
-  await sleep(250);
-  await whileFocused(CODEX_CLS, () => sendKeys(keys));
-  sd.showOk(context);
+function pressReasoning(context, settings, direction = 1) {
+  const next = reasoning.cycleLevel(direction);
+  console.log(`reasoning -> ${next}`);
+  renderAll(['reasoning']);
 }
 
 // ---------- event wiring ----------
@@ -279,7 +270,7 @@ sd.on('keyUp', async (e) => {
     if (kind === 'agent') await pressAgent(e.context, inst.settings);
     else if (kind === 'command') await pressCommand(e.context, inst.settings);
     else if (kind === 'skill') await pressSkill(e.context, inst.settings);
-    else if (kind === 'reasoning') await pressReasoning(e.context, inst.settings, 0);
+    else if (kind === 'reasoning') pressReasoning(e.context, inst.settings, 1);
     else if (kind === 'model') await pressModel(e.context, inst.settings);
     else if (kind === 'usage') await pressUsage(e.context);
   } catch (err) {
@@ -288,11 +279,10 @@ sd.on('keyUp', async (e) => {
   }
 });
 
-sd.on('dialRotate', async (e) => {
+sd.on('dialRotate', (e) => {
   const inst = instances.get(e.context);
   if (inst?.action === `${PREFIX}.reasoning`) {
-    try { await pressReasoning(e.context, inst.settings, e.payload?.ticks > 0 ? 1 : -1); }
-    catch (err) { console.error('reasoning dial failed', err); sd.showAlert(e.context); }
+    pressReasoning(e.context, inst.settings, e.payload?.ticks > 0 ? 1 : -1);
   }
 });
 
@@ -310,6 +300,10 @@ setInterval(() => {
   pulse = !pulse;
   if (state.get().some((s) => s.status === 'working')) renderAll(['agent']);
 }, 900);
+
+// config.toml may change outside the plugin (e.g. Codex itself) — keep the
+// reasoning key's displayed level in sync.
+setInterval(() => renderAll(['reasoning']), 5000);
 
 // Refresh weekly usage periodically (only if a usage key is on screen).
 setInterval(async () => {

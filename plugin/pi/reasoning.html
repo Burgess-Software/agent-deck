@@ -1,28 +1,13 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
 <body>
-  <div class="hint" style="margin-bottom:10px">
-    Codex has a <b>Cycle reasoning effort</b> command that changes the current
-    thread live, but it ships with <b>no keyboard shortcut</b>. Bind one in
-    <b>Codex → Settings → Keyboard Shortcuts</b> (search "reasoning"), then enter
-    the same combo below.
-  </div>
-  <label>Cycle shortcut (key press) — match your Codex binding</label>
-  <input type="text" data-setting="cycleKeys" placeholder="ctrl+alt+e">
-  <label>Key label</label>
-  <input type="text" data-setting="label" placeholder="Reason">
-  <label>Increase shortcut (encoder rotate right, optional)</label>
-  <input type="text" data-setting="upKeys" placeholder="defaults to the cycle shortcut">
-  <label>Decrease shortcut (encoder rotate left, optional)</label>
-  <input type="text" data-setting="downKeys" placeholder="defaults to the cycle shortcut">
   <div class="hint">
-    Combos use "ctrl", "shift", "alt", "super" + a key, e.g. <code>ctrl+alt+r</code>.
-    On a plain keypad the press cycles Light → … → Ultra. On a Stream Deck +,
-    bind Increase/Decrease reasoning effort in Codex too and set them above.
+    Press (or rotate, on a Stream Deck +) to cycle Codex reasoning effort:
+    Light → Medium → High → Extra High → Ultra
+    (writes <code>model_reasoning_effort</code> in <code>~/.codex/config.toml</code>).
+    <br><br>
+    Note: this sets the effort for <b>new</b> Codex threads. It does not change a
+    thread that's already open — pick that from Codex's own model controls.
   </div>
-  <script>
-    const form = bindForm();
-    window.onPIReady = (s) => { if (!('cycleKeys' in s)) s.cycleKeys = 'ctrl+alt+e'; form.load(s); };
-    window.onSettings = (s) => form.load(s);
-  </script>
+  <script>bindForm();</script>
 </body></html>

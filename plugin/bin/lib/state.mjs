@@ -17,7 +17,24 @@ export const STATE_DIR = path.join(os.homedir(), '.local/share/agentdeck');
 const CLAUDE_STATE = path.join(STATE_DIR, 'state/claude');
 const CODEX_STATE = path.join(STATE_DIR, 'state/codex');
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex/sessions');
+const CLAUDE_DESKTOP_SESSIONS = path.join(os.homedir(), '.config/Claude/claude-code-sessions');
 const TARGET_FILE = path.join(STATE_DIR, 'target');
+
+let sessionDirsCache = null;
+async function globSessionDirs() {
+  if (sessionDirsCache) return sessionDirsCache;
+  const dirs = [];
+  try {
+    for (const org of await fsp.readdir(CLAUDE_DESKTOP_SESSIONS)) {
+      const orgDir = path.join(CLAUDE_DESKTOP_SESSIONS, org);
+      try {
+        for (const user of await fsp.readdir(orgDir)) dirs.push(path.join(orgDir, user));
+      } catch { /* not a dir */ }
+    }
+  } catch { /* store absent (desktop app not installed) */ }
+  sessionDirsCache = dirs;
+  return dirs;
+}
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // hide sessions idle > 12h
 const CODEX_ACTIVE_WINDOW_MS = 15 * 1000;   // file touched this recently = working
@@ -42,6 +59,12 @@ export class AgentState extends EventEmitter {
     } catch (e) {
       console.error('fs.watch failed, relying on polling only', e);
     }
+    this.desktopWatchers = [];
+    globSessionDirs().then((dirs) => {
+      for (const d of dirs) {
+        try { this.desktopWatchers.push(fs.watch(d, notify)); } catch { /* polling covers it */ }
+      }
+    });
     this.timer = setInterval(notify, POLL_MS);
     return this.refresh();
   }
@@ -51,6 +74,7 @@ export class AgentState extends EventEmitter {
     this.claudeWatcher?.close();
     this.codexNotifyWatcher?.close();
     this.targetWatcher?.close();
+    for (const w of this.desktopWatchers ?? []) w.close();
   }
 
   getTarget() {
@@ -80,27 +104,48 @@ export class AgentState extends EventEmitter {
   }
 
   async scanClaude() {
+    // Source of truth: the desktop app's own session store
+    // (~/.config/Claude/claude-code-sessions/<org>/<user>/local_*.json).
+    // Hook state files (keyed by CLI session id) contribute live status.
+    const hookStatus = new Map();
+    try {
+      for (const f of await fsp.readdir(CLAUDE_STATE)) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const data = JSON.parse(await fsp.readFile(path.join(CLAUDE_STATE, f), 'utf8'));
+          if (Date.now() - data.ts > SESSION_TTL_MS) {
+            await fsp.unlink(path.join(CLAUDE_STATE, f)).catch(() => {});
+            continue;
+          }
+          hookStatus.set(f.replace(/\.json$/, ''), data);
+        } catch { /* partial write */ }
+      }
+    } catch { /* no state dir yet */ }
+
     const out = [];
-    let files;
-    try { files = await fsp.readdir(CLAUDE_STATE); } catch { return out; }
-    for (const f of files) {
-      if (!f.endsWith('.json')) continue;
-      const p = path.join(CLAUDE_STATE, f);
-      try {
-        const data = JSON.parse(await fsp.readFile(p, 'utf8'));
-        if (Date.now() - data.ts > SESSION_TTL_MS) {
-          await fsp.unlink(p).catch(() => {});
-          continue;
-        }
-        out.push({
-          app: 'claude',
-          id: f.replace(/\.json$/, ''),
-          status: data.status,
-          cwd: data.cwd || '',
-          project: data.cwd ? path.basename(data.cwd) : '?',
-          ts: data.ts,
-        });
-      } catch { /* partial write; next refresh catches it */ }
+    for (const dir of await globSessionDirs()) {
+      let files;
+      try { files = await fsp.readdir(dir); } catch { continue; }
+      for (const f of files) {
+        if (!f.startsWith('local_') || !f.endsWith('.json')) continue;
+        try {
+          const s = JSON.parse(await fsp.readFile(path.join(dir, f), 'utf8'));
+          if (s.isArchived) continue;
+          const ts = s.lastActivityAt ?? s.lastFocusedAt ?? s.createdAt ?? 0;
+          if (Date.now() - ts > SESSION_TTL_MS) continue;
+          const hook = s.cliSessionId ? hookStatus.get(s.cliSessionId) : null;
+          out.push({
+            app: 'claude',
+            id: s.sessionId,           // local_… id, used by the claude://code deep link
+            cliId: s.cliSessionId,
+            status: hook?.status ?? 'idle',
+            cwd: s.cwd || '',
+            project: s.cwd ? path.basename(s.cwd) : '?',
+            title: s.title || (s.cwd ? path.basename(s.cwd) : 'chat'),
+            ts,
+          });
+        } catch { /* partial write */ }
+      }
     }
     out.sort((a, b) => b.ts - a.ts);
     return out;
@@ -168,6 +213,7 @@ export class AgentState extends EventEmitter {
         status,
         cwd: meta.cwd,
         project: meta.cwd ? path.basename(meta.cwd) : '?',
+        title: meta.cwd ? path.basename(meta.cwd) : 'thread',
         ts: stat.mtimeMs,
       });
     }

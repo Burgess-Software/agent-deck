@@ -61,7 +61,8 @@ function renderAgent(context, settings) {
   }
   const dim = s.status === 'working' && pulse;
   sd.setImage(context, icons.agentKey({ status: s.status, app, dim }));
-  const label = s.project.length > 9 ? `${s.project.slice(0, 8)}…` : s.project;
+  const name = s.title || s.project;
+  const label = name.length > 9 ? `${name.slice(0, 8)}…` : name;
   sd.setTitle(context, `\n\n\n${label}`);
 }
 
@@ -122,8 +123,10 @@ async function pressAgent(context, settings) {
   if (s) {
     // Switch to the specific chat via the app's deep link scheme, then make
     // sure the window is focused (Wayland blocks apps raising themselves).
+    // Claude: s.id is the desktop app's local_… session id; claude://code/<id>
+    // navigates to the existing chat (claude://resume would import a copy).
     const uri = app === 'claude'
-      ? `claude://resume?session=${s.id}`
+      ? `claude://code/${s.id}`
       : `codex://threads/${s.id}`;
     console.log(`agent key: opening ${uri}`);
     await openUri(uri);

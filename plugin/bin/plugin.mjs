@@ -4,7 +4,9 @@ import { StreamDeck, parseArgs } from './lib/protocol.mjs';
 import { AgentState } from './lib/state.mjs';
 import * as icons from './lib/icons.mjs';
 import * as reasoning from './lib/reasoning.mjs';
-import { focusOrLaunch, sendKeys, pasteText, runShell, openUri } from './lib/inject.mjs';
+import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, APP_WINDOW_CLASS } from './lib/inject.mjs';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const PREFIX = 'com.thomasburgess.agentdeck';
 
@@ -120,19 +122,31 @@ function renderAll(kinds = null) {
 async function pressAgent(context, settings) {
   const app = appFor(settings);
   const s = sessionForSlot(app, Number(settings?.slot ?? 0));
-  if (s) {
-    // Switch to the specific chat via the app's deep link scheme, then make
-    // sure the window is focused (Wayland blocks apps raising themselves).
-    // Claude: s.id is the desktop app's local_… session id; claude://code/<id>
-    // navigates to the existing chat (claude://resume would import a copy).
-    const uri = app === 'claude'
-      ? `claude://code/${s.id}`
-      : `codex://threads/${s.id}`;
-    console.log(`agent key: opening ${uri}`);
-    await openUri(uri);
-    await new Promise((r) => setTimeout(r, 400));
+  if (!s) { await focusOrLaunch(app); return; }
+
+  if (app === 'codex') {
+    console.log(`agent key: opening codex://threads/${s.id}`);
+    await openUri(`codex://threads/${s.id}`);
+    await sleep(400);
+    await focusOrLaunch('codex');
+    return;
   }
-  await focusOrLaunch(app, '');
+
+  // Claude desktop has no deep link for local sessions (claude://code/* only
+  // accepts cloud cse_… ids; claude://resume imports a duplicate). Drive the
+  // in-app Ctrl+K chat switcher instead: search the title, Enter opens the
+  // top match. Every injection is focus-guarded so keystrokes never land in
+  // another window if the user switches away mid-flow.
+  const cls = APP_WINDOW_CLASS.claude;
+  console.log(`agent key: switching via ctrl+k to ${JSON.stringify(s.title)}`);
+  const focused = await focusOrLaunch('claude');
+  if (!focused) return; // app just launched; no chats to switch between yet
+  await sleep(300);
+  await whileFocused(cls, () => sendKeys('ctrl+k'));
+  await sleep(450);
+  await whileFocused(cls, () => pasteText(s.title, { submit: false }));
+  await sleep(700); // let the palette filter settle on the top match
+  await whileFocused(cls, () => sendKeys('enter'));
 }
 
 async function pressCommand(context, settings) {

@@ -151,6 +151,52 @@ export function runShell(command) {
   });
 }
 
+/** resourceClass of the currently focused window (KWin), or null. */
+export async function activeWindowClass() {
+  const name = `agentdeck-active-${process.pid}-${kwinScriptCounter++}`;
+  const marker = `AGENTDECK_ACTIVE_${Date.now()}`;
+  const script = `
+    const w = workspace.activeWindow !== undefined ? workspace.activeWindow : workspace.activeClient;
+    print(${JSON.stringify(marker)} + ":" + (w ? String(w.resourceClass) : "none"));
+  `;
+  const file = join(tmpdir(), `${name}.js`);
+  await writeFile(file, script);
+  try {
+    const load = await run('dbus-send', [
+      '--session', '--print-reply', '--dest=org.kde.KWin', '/Scripting',
+      'org.kde.kwin.Scripting.loadScript', `string:${file}`, `string:${name}`,
+    ]);
+    const m = load.stdout.match(/int32 (\d+)/);
+    if (!m) return null;
+    await run('dbus-send', [
+      '--session', '--print-reply', '--dest=org.kde.KWin', `/Scripting/Script${m[1]}`,
+      'org.kde.kwin.Script.run',
+    ]);
+    await run('dbus-send', [
+      '--session', '--print-reply', '--dest=org.kde.KWin', '/Scripting',
+      'org.kde.kwin.Scripting.unloadScript', `string:${name}`,
+    ]);
+    await sleep(100);
+    const journal = await run('journalctl', ['--user', '-n', '200', '-o', 'cat', '--since', '-10s']);
+    const hit = journal.stdout.split('\n').reverse().find((l) => l.includes(marker));
+    return hit ? hit.split(`${marker}:`)[1]?.trim() ?? null : null;
+  } finally {
+    unlink(file).catch(() => {});
+  }
+}
+
+/**
+ * Guarded injection: runs `fn` only if the focused window's class contains
+ * `cls`. Prevents keystrokes from landing in whatever the user switched to.
+ */
+export async function whileFocused(cls, fn) {
+  const active = await activeWindowClass();
+  if (!active || !active.toLowerCase().includes(cls.toLowerCase())) {
+    throw new Error(`focus moved to "${active}" — aborting injection meant for ${cls}`);
+  }
+  return fn();
+}
+
 /** Open a deep link (claude:// or codex://) via the desktop's URI handlers. */
 export function openUri(uri) {
   return new Promise((resolve) => {

@@ -6,15 +6,23 @@ import os from 'node:os';
 
 const CODEX_CONFIG = path.join(os.homedir(), '.codex/config.toml');
 
-export const LEVELS = ['minimal', 'low', 'medium', 'high'];
+// Config values written to model_reasoning_effort, low→high, as offered by the
+// gpt-5.6-sol model controls. UI labels differ (low is shown as "Light",
+// xhigh as "Extra High").
+export const LEVELS = ['low', 'medium', 'high', 'xhigh', 'ultra'];
+export const LABELS = { low: 'Light', medium: 'Medium', high: 'High', xhigh: 'Extra High', ultra: 'Ultra' };
+
+export function label(level) {
+  return LABELS[level] ?? level;
+}
 
 export function getLevel() {
   try {
     const toml = fs.readFileSync(CODEX_CONFIG, 'utf8');
     const m = toml.match(/^\s*model_reasoning_effort\s*=\s*"([^"]+)"/m);
-    return m ? m[1] : 'medium';
+    return m ? m[1] : 'high';
   } catch {
-    return 'medium';
+    return 'high';
   }
 }
 

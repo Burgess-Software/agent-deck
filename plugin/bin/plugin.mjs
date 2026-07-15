@@ -102,9 +102,10 @@ function renderSkill(context, settings) {
 function renderReasoning(context) {
   const levels = reasoning.LEVELS;
   const level = reasoning.getLevel();
-  const frac = (levels.indexOf(level) + 1) / levels.length;
-  sd.setImage(context, icons.reasoningKey({ frac: frac > 0 ? frac : 0.5 }));
-  sd.setTitle(context, `\n\n\n${level}`);
+  const idx = levels.indexOf(level);
+  const frac = idx >= 0 ? (idx + 1) / levels.length : 0.5;
+  sd.setImage(context, icons.reasoningKey({ frac }));
+  sd.setTitle(context, `\n\n${wrapLabel(reasoning.label(level))}`);
 }
 
 function render(context) {

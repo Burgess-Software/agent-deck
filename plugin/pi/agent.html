@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
+<body>
+  <label>App</label>
+  <select data-setting="app">
+    <option value="">Follow target toggle</option>
+    <option value="claude">Claude Code</option>
+    <option value="codex">Codex</option>
+  </select>
+  <label>Session slot (0 = most recent)</label>
+  <select data-setting="slot">
+    <option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+  </select>
+  <div class="hint">
+    Colors: grey idle · orange working · blue needs input · green done · red error.
+    Press the key to focus that agent's window.
+  </div>
+  <script>
+    const form = bindForm();
+    window.onPIReady = (s) => form.load(s);
+    window.onSettings = (s) => form.load(s);
+  </script>
+</body></html>

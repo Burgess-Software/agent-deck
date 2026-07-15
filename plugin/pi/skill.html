@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
+<body>
+  <label>Skill preset</label>
+  <select data-setting="skill">
+    <option value="review">Review PR</option>
+    <option value="debug">Debug error</option>
+    <option value="refactor">Refactor</option>
+    <option value="tests">Write tests</option>
+    <option value="explain">Explain code</option>
+    <option value="ship">Commit &amp; push</option>
+  </select>
+  <label>App</label>
+  <select data-setting="app">
+    <option value="">Follow target toggle</option>
+    <option value="claude">Claude Code</option>
+    <option value="codex">Codex</option>
+  </select>
+  <label>Key label (optional)</label>
+  <input type="text" data-setting="label">
+  <label>Custom prompt (overrides preset)</label>
+  <textarea data-setting="prompt"></textarea>
+  <div class="row"><input type="checkbox" id="autosend" data-setting="autosend" checked><label for="autosend" style="margin:0">Send immediately (uncheck to just fill the input)</label></div>
+  <div class="hint">The prompt is pasted into the focused chat input of the target app.</div>
+  <script>
+    const form = bindForm();
+    window.onPIReady = (s) => { if (!('autosend' in s)) s.autosend = true; form.load(s); };
+    window.onSettings = (s) => form.load(s);
+  </script>
+</body></html>

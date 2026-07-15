@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
+<body>
+  <label>Command</label>
+  <select data-setting="command">
+    <option value="accept">Accept (Enter)</option>
+    <option value="reject">Reject (Esc)</option>
+    <option value="interrupt">Interrupt (Esc)</option>
+    <option value="newchat">New chat (Ctrl+N)</option>
+    <option value="ptt">Push-to-talk (shell command)</option>
+    <option value="custom">Custom</option>
+  </select>
+  <label>App</label>
+  <select data-setting="app">
+    <option value="">Follow target toggle</option>
+    <option value="claude">Claude Code</option>
+    <option value="codex">Codex</option>
+  </select>
+  <label>Key label (optional)</label>
+  <input type="text" data-setting="label" placeholder="defaults to command name">
+  <label>Custom keystrokes (e.g. "ctrl+shift+p" or "esc esc")</label>
+  <input type="text" data-setting="keys" placeholder="overrides the preset keys">
+  <label>Custom text to paste</label>
+  <textarea data-setting="text" placeholder="pasted into the app instead of keystrokes"></textarea>
+  <div class="row"><input type="checkbox" id="submit" data-setting="submit"><label for="submit" style="margin:0">Press Enter after pasting</label></div>
+  <label>Shell command (push-to-talk / anything)</label>
+  <input type="text" data-setting="shell" placeholder="e.g. toggle your speech-to-text">
+  <div class="hint">Priority: shell command → custom text → custom keystrokes → preset.</div>
+  <script>
+    const form = bindForm();
+    window.onPIReady = (s) => form.load(s);
+    window.onSettings = (s) => form.load(s);
+  </script>
+</body></html>

@@ -1,0 +1,70 @@
+{
+  "Name": "Agent Deck",
+  "Description": "Codex Micro-style control surface for Claude Code and Codex desktop apps: live agent status keys, accept/reject/new-chat command keys, one-tap workflow skills, and a reasoning-effort dial.",
+  "Author": "Thomas Burgess",
+  "Version": "1.0.0",
+  "Icon": "icons/plugin",
+  "Category": "Agent Deck",
+  "CategoryIcon": "icons/plugin",
+  "CodePath": "agentdeck.sh",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "6.0" },
+  "OS": [
+    { "Platform": "linux", "MinimumVersion": "*" },
+    { "Platform": "mac", "MinimumVersion": "10.15" }
+  ],
+  "Actions": [
+    {
+      "UUID": "com.thomasburgess.agentdeck.agent",
+      "Name": "Agent Status Key",
+      "Tooltip": "Live status of an agent session (idle / working / needs input / done / error). Press to focus its window.",
+      "Icon": "icons/agent",
+      "PropertyInspectorPath": "pi/agent.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/agent", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.thomasburgess.agentdeck.command",
+      "Name": "Command Key",
+      "Tooltip": "Accept, reject, interrupt, new chat, push-to-talk, or a custom command sent to the target app.",
+      "Icon": "icons/command",
+      "PropertyInspectorPath": "pi/command.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/command", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.thomasburgess.agentdeck.skill",
+      "Name": "Skill Key",
+      "Tooltip": "Fire a preset workflow prompt (review PR, debug, refactor, ...) into the target app.",
+      "Icon": "icons/skill",
+      "PropertyInspectorPath": "pi/skill.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/skill", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.thomasburgess.agentdeck.reasoning",
+      "Name": "Reasoning Dial",
+      "Tooltip": "Cycle the reasoning effort of the target app (Claude effortLevel / Codex model_reasoning_effort).",
+      "Icon": "icons/reasoning",
+      "PropertyInspectorPath": "pi/reasoning.html",
+      "Controllers": ["Keypad", "Encoder"],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Adjust reasoning effort",
+          "Push": "Toggle target app"
+        }
+      },
+      "States": [{ "Image": "icons/reasoning", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.thomasburgess.agentdeck.target",
+      "Name": "Target App Toggle",
+      "Tooltip": "Switch which app the other keys control: Claude Code or Codex.",
+      "Icon": "icons/target",
+      "PropertyInspectorPath": "pi/target.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/target", "TitleAlignment": "bottom" }]
+    }
+  ]
+}

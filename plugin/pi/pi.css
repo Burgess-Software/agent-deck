@@ -1,0 +1,21 @@
+body {
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: #d8dae0;
+  background: #2d2d2d;
+  margin: 0;
+  padding: 10px;
+}
+label { display: block; margin: 10px 0 3px; color: #9ba1ad; }
+select, input[type="text"], textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1f1f1f;
+  color: #e8e8e8;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  padding: 5px 6px;
+}
+textarea { min-height: 80px; resize: vertical; }
+.row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.hint { color: #7a8090; font-size: 11px; margin-top: 6px; line-height: 1.4; }

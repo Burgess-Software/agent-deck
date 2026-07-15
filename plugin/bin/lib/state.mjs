@@ -131,56 +131,42 @@ export class AgentState extends EventEmitter {
   }
 }
 
-// Turn a raw first-user-message into a compact thread title, mirroring what
-// the Codex app shows. Strips markdown links/urls/punctuation and collapses
-// whitespace. Result is cached per file (first message never changes).
-function cleanTitle(msg) {
-  return String(msg)
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // [text](url) -> text
-    .replace(/https?:\/\/\S+/g, '')          // bare urls
-    .replace(/[`*_#>]/g, '')                 // markdown punctuation
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 48);
+// Project name from a git remote URL: git@github.com:Org/repo.git -> "repo".
+function projectFromGit(git) {
+  const url = git?.repository_url;
+  if (!url) return null;
+  const m = url.replace(/\.git$/, '').match(/[/:]([^/]+?)\/?$/);
+  return m ? m[1] : null;
 }
 
-// Stream the rollout to pull the session id + cwd (from the session_meta line)
-// and the first real user message (an event_msg of type "user_message" — the
-// clean message, not the system-injected context items). Stops as soon as it
-// has the title, or after a bounded number of lines.
+// Read the session_meta line (first line) for id, cwd, and git remote. The
+// project label is the git repo name when the thread is in a repo, else the
+// cwd basename. Cached per file.
 function readCodexMeta(file) {
   return new Promise((resolve) => {
     const fallbackId = path.basename(file, '.jsonl').replace(/^rollout-[\dT-]+-(?=[0-9a-f])/, '');
-    let id = '', cwd = '', title = '', lines = 0, settled = false;
+    let settled = false;
     const stream = fs.createReadStream(file, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const finish = () => {
+    const done = (id, cwd, git) => {
       if (settled) return;
       settled = true;
       rl.close();
       stream.destroy();
-      resolve({
-        id: id || fallbackId,
-        cwd,
-        title: title || (cwd ? path.basename(cwd) : 'thread'),
-      });
+      const project = projectFromGit(git) || (cwd ? path.basename(cwd) : 'thread');
+      resolve({ id: id || fallbackId, cwd, project, title: project });
     };
     rl.on('line', (line) => {
       if (settled) return;
-      if (++lines > 600) return finish(); // bound work on huge transcripts
-      let o;
-      try { o = JSON.parse(line); } catch { return; }
-      const p = o.payload ?? o;
-      if (o.type === 'session_meta' || p.session_id) {
-        id = p.session_id || p.id || id;
-        cwd = p.cwd || cwd;
-      }
-      if (!title && o.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') {
-        title = cleanTitle(p.message);
-        if (title) return finish();
+      try {
+        const o = JSON.parse(line);
+        const p = o.payload ?? o;
+        done(p.session_id || p.id, p.cwd || '', p.git);
+      } catch {
+        done(null, '', null);
       }
     });
-    rl.on('close', finish);
-    rl.on('error', finish);
+    rl.on('close', () => done(null, '', null));
+    rl.on('error', () => done(null, '', null));
   });
 }

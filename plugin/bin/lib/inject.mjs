@@ -100,61 +100,46 @@ const KEYCODES = {
   delete: 111, insert: 110,
 };
 
-// xdotool key-name translation for the few names that differ from our
-// combo syntax ("esc" -> "Escape" etc.). Everything else passes through.
-const XDOTOOL_KEYS = {
-  esc: 'Escape', enter: 'Return', backspace: 'BackSpace', space: 'space',
-  tab: 'Tab', up: 'Up', down: 'Down', left: 'Left', right: 'Right',
-  pageup: 'Page_Up', pagedown: 'Page_Down', home: 'Home', end: 'End',
-  delete: 'Delete', insert: 'Insert', minus: 'minus', equal: 'equal',
-};
+function comboCodes(combo) {
+  const codes = combo.toLowerCase().split('+').map((p) => KEYCODES[p]);
+  if (codes.some((c) => c === undefined)) throw new Error(`unknown key in combo "${combo}"`);
+  return codes;
+}
 
 /**
  * Send a key combo like "ctrl+n", "enter", "ctrl+shift+p", or a sequence
  * of combos separated by spaces: "esc esc".
  *
- * Codex desktop runs under XWayland, where xdotool (XTEST) delivers
- * modifier combos reliably; ydotool's uinput path proved flaky for combos
- * into XWayland windows. Falls back to ydotool if xdotool is unavailable.
+ * Uses ydotool (kernel uinput), NOT xdotool/XTEST. On this KDE Wayland
+ * session Xwayland runs with -enable-ei-portal, so XTEST synthetic input is
+ * routed through the RemoteDesktop portal and pops a "control input devices"
+ * authorization dialog. uinput injects below the display server and never
+ * triggers the portal. Delivers fine to XWayland windows (Codex) too.
  */
 export async function sendKeys(combos) {
   for (const combo of combos.trim().split(/\s+/)) {
-    const parts = combo.toLowerCase().split('+');
-    const xcombo = parts.map((p) => XDOTOOL_KEYS[p] ?? p).join('+');
-    const res = await run('xdotool', ['key', '--clearmodifiers', xcombo]);
-    if (!res.ok) {
-      await sendKeysYdotool(combo);
-    }
+    const codes = comboCodes(combo);
+    const seq = [
+      ...codes.map((c) => `${c}:1`),
+      ...codes.slice().reverse().map((c) => `${c}:0`),
+    ];
+    const res = await run('ydotool', ['key', '--key-delay', '12', ...seq]);
+    if (!res.ok) throw new Error(`ydotool failed: ${res.stderr || res.err}`);
     await sleep(60);
   }
 }
 
 /** Hold a combo down (for push-to-talk). Pair with releaseKeys. */
 export async function holdKeys(combo) {
-  const parts = combo.toLowerCase().split('+');
-  const xcombo = parts.map((p) => XDOTOOL_KEYS[p] ?? p).join('+');
-  const res = await run('xdotool', ['keydown', '--clearmodifiers', xcombo]);
-  if (!res.ok) throw new Error(`xdotool keydown failed: ${res.stderr || res.err}`);
+  const codes = comboCodes(combo);
+  const res = await run('ydotool', ['key', '--key-delay', '8', ...codes.map((c) => `${c}:1`)]);
+  if (!res.ok) throw new Error(`ydotool keydown failed: ${res.stderr || res.err}`);
 }
 
+/** Release a held combo (reverse order). */
 export async function releaseKeys(combo) {
-  const parts = combo.toLowerCase().split('+');
-  const xcombo = parts.map((p) => XDOTOOL_KEYS[p] ?? p).join('+');
-  await run('xdotool', ['keyup', xcombo]);
-}
-
-async function sendKeysYdotool(combo) {
-  const parts = combo.toLowerCase().split('+');
-  const codes = parts.map((p) => KEYCODES[p]);
-  if (codes.some((c) => c === undefined)) {
-    throw new Error(`unknown key in combo "${combo}"`);
-  }
-  const seq = [
-    ...codes.map((c) => `${c}:1`),
-    ...codes.slice().reverse().map((c) => `${c}:0`),
-  ];
-  const res = await run('ydotool', ['key', '--key-delay', '12', ...seq]);
-  if (!res.ok) throw new Error(`ydotool failed: ${res.stderr || res.err}`);
+  const codes = comboCodes(combo);
+  await run('ydotool', ['key', '--key-delay', '8', ...codes.slice().reverse().map((c) => `${c}:0`)]);
 }
 
 /** Put text in the focused input via clipboard paste; restores clipboard. */

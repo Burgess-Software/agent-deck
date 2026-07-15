@@ -4,8 +4,12 @@
 import { StreamDeck, parseArgs } from './lib/protocol.mjs';
 import { AgentState } from './lib/state.mjs';
 import * as icons from './lib/icons.mjs';
-import * as reasoning from './lib/reasoning.mjs';
 import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
+
+// Default shortcut the reasoning key sends. Bind this to "Cycle reasoning
+// effort" in Codex → Settings → Keyboard Shortcuts (it has no default). The
+// increase/decrease variants are used by an encoder's rotation if bound.
+const DEFAULT_REASONING_CYCLE = 'ctrl+alt+r';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -99,13 +103,12 @@ function renderSkill(context, settings) {
   sd.setTitle(context, `\n\n${wrapLabel(settings?.label || preset.title)}`);
 }
 
-function renderReasoning(context) {
-  const levels = reasoning.LEVELS;
-  const level = reasoning.getLevel();
-  const idx = levels.indexOf(level);
-  const frac = idx >= 0 ? (idx + 1) / levels.length : 0.5;
-  sd.setImage(context, icons.reasoningKey({ frac }));
-  sd.setTitle(context, `\n\n${wrapLabel(reasoning.label(level))}`);
+function renderReasoning(context, settings) {
+  // The current level lives in Codex's UI state, not a file we can read, so
+  // the key is a stateless "nudge" (like the hardware dial) rather than a
+  // gauge. Show a neutral dial glyph + label.
+  sd.setImage(context, icons.reasoningKey({ frac: 0.6 }));
+  sd.setTitle(context, `\n\n${wrapLabel(settings?.label || 'Reason')}`);
 }
 
 function render(context) {
@@ -116,7 +119,7 @@ function render(context) {
     if (kind === 'agent') renderAgent(context, inst.settings);
     else if (kind === 'command') renderCommand(context, inst.settings);
     else if (kind === 'skill') renderSkill(context, inst.settings);
-    else if (kind === 'reasoning') renderReasoning(context);
+    else if (kind === 'reasoning') renderReasoning(context, inst.settings);
   } catch (e) {
     console.error(`render ${kind} failed`, e);
   }
@@ -172,10 +175,16 @@ async function pressSkill(context, settings) {
   sd.showOk(context);
 }
 
-function pressReasoning(context, settings, direction = 1) {
-  const next = reasoning.cycleLevel(direction);
-  console.log(`reasoning -> ${next}`);
-  renderAll(['reasoning']);
+async function pressReasoning(context, settings, direction = 0) {
+  // direction 0 = cycle (key press), +1 = increase, -1 = decrease (encoder).
+  const cycle = settings?.cycleKeys || DEFAULT_REASONING_CYCLE;
+  const keys = direction > 0 ? (settings?.upKeys || cycle)
+    : direction < 0 ? (settings?.downKeys || cycle)
+    : cycle;
+  await focusOrLaunch('codex');
+  await sleep(250);
+  await whileFocused(CODEX_CLS, () => sendKeys(keys));
+  sd.showOk(context);
 }
 
 // ---------- event wiring ----------
@@ -238,17 +247,18 @@ sd.on('keyUp', async (e) => {
     if (kind === 'agent') await pressAgent(e.context, inst.settings);
     else if (kind === 'command') await pressCommand(e.context, inst.settings);
     else if (kind === 'skill') await pressSkill(e.context, inst.settings);
-    else if (kind === 'reasoning') pressReasoning(e.context, inst.settings, 1);
+    else if (kind === 'reasoning') await pressReasoning(e.context, inst.settings, 0);
   } catch (err) {
     console.error(`keyUp ${kind} failed`, err);
     sd.showAlert(e.context);
   }
 });
 
-sd.on('dialRotate', (e) => {
+sd.on('dialRotate', async (e) => {
   const inst = instances.get(e.context);
   if (inst?.action === `${PREFIX}.reasoning`) {
-    pressReasoning(e.context, inst.settings, e.payload?.ticks > 0 ? 1 : -1);
+    try { await pressReasoning(e.context, inst.settings, e.payload?.ticks > 0 ? 1 : -1); }
+    catch (err) { console.error('reasoning dial failed', err); sd.showAlert(e.context); }
   }
 });
 
@@ -266,7 +276,6 @@ setInterval(() => {
   pulse = !pulse;
   if (state.get().some((s) => s.status === 'working')) renderAll(['agent']);
 }, 900);
-setInterval(() => renderAll(['reasoning']), 5000);
 
 await sd.readyPromise;
 await state.start();

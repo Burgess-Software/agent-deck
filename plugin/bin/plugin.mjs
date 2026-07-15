@@ -13,7 +13,7 @@ const COMMAND_PRESETS = {
   reject:    { title: 'Reject',   keys: 'esc',    accent: '#e74c3c' },
   interrupt: { title: 'Stop',     keys: 'esc',    accent: '#e74c3c' },
   newchat:   { title: 'New chat', keys: 'ctrl+n', accent: '#3d8bfd' },
-  ptt:       { title: 'Voice',    shell: '',      accent: '#b48cf2' },
+  ptt:       { title: 'Voice',    appKeys: { claude: 'ctrl+d', codex: 'ctrl+shift+d' }, accent: '#b48cf2' },
   custom:    { title: 'Custom',   keys: '',       accent: '#f7821b' },
 };
 
@@ -126,10 +126,8 @@ async function pressCommand(context, settings) {
   const name = settings?.command ?? 'accept';
   const preset = COMMAND_PRESETS[name] ?? COMMAND_PRESETS.accept;
   const app = appFor(settings);
-  if (name === 'ptt' || settings?.shell) {
-    const cmd = settings?.shell || preset.shell;
-    if (!cmd) { sd.showAlert(context); return; }
-    const res = await runShell(cmd);
+  if (settings?.shell) {
+    const res = await runShell(settings.shell);
     res.ok ? sd.showOk(context) : sd.showAlert(context);
     return;
   }
@@ -140,7 +138,7 @@ async function pressCommand(context, settings) {
     sd.showOk(context);
     return;
   }
-  const keys = settings?.keys || preset.keys;
+  const keys = settings?.keys || preset.appKeys?.[app] || preset.keys;
   if (!keys) { sd.showAlert(context); return; }
   await focusOrLaunch(app);
   await new Promise((r) => setTimeout(r, 300));

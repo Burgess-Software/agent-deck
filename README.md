@@ -9,7 +9,7 @@ desktop app.
 | Codex Micro | Agent Deck |
 |---|---|
 | 6 RGB Agent Keys (live thread status) | **Agent Status Key** action — one per session slot; grey idle · orange (pulsing) working · blue needs input · green done. Press to focus that agent's window. |
-| Command Keys (accept / reject / PTT / new chat) | **Command Key** action — presets for Accept (Enter), Reject/Interrupt (Esc), New chat (Ctrl+N), push-to-talk via any shell command, plus custom keystrokes/text. |
+| Command Keys (accept / reject / PTT / new chat) | **Command Key** action — presets for Accept (Enter), Reject/Interrupt (Esc), New chat (Ctrl+N), push-to-talk via each app's native dictation toggle (Ctrl+D in Claude Code, Ctrl+Shift+D in Codex), plus custom keystrokes/text/shell. |
 | Joystick → 4 preset skills (review PR, debug, refactor) | **Skill Key** action — Review PR, Debug, Refactor, Write tests, Explain, Commit & push, or a custom prompt. Pastes into the app's chat input and (optionally) submits. |
 | Dial → reasoning depth | **Reasoning Dial** action — cycles the *real* config: `effortLevel` in `~/.claude/settings.json`, `model_reasoning_effort` in `~/.codex/config.toml`. Works as a key (cycle) or a Stream Deck + encoder (rotate). |
 | 6 layers + AppSense | **Target App Toggle** action — one key flips every "follow target" key between Claude and Codex. OpenDeck profiles cover the rest. |
@@ -45,8 +45,9 @@ KDE Plasma (Wayland). Config backups are written next to the originals
 | Accept | Reject | New chat | Voice (PTT) | **Target toggle** |
 | Review PR | Debug | Refactor | Tests | **Reasoning dial** |
 
-Push-to-talk ships unassigned — point it at any speech-to-text toggle
-(e.g. handy-to-tmux) via the key's "Shell command" field.
+Push-to-talk focuses the target app and sends its native dictation shortcut
+(Ctrl+D in Claude Code, Ctrl+Shift+D in Codex). A custom shell command can
+override it via the key's settings.
 
 ## Uninstall
 

@@ -7,7 +7,7 @@
     <option value="reject">Reject (Esc)</option>
     <option value="interrupt">Interrupt (Esc)</option>
     <option value="newchat">New chat (Ctrl+N)</option>
-    <option value="ptt">Push-to-talk (shell command)</option>
+    <option value="ptt">Push-to-talk (Ctrl+D / Ctrl+Shift+D)</option>
     <option value="custom">Custom</option>
   </select>
   <label>App</label>
@@ -23,9 +23,10 @@
   <label>Custom text to paste</label>
   <textarea data-setting="text" placeholder="pasted into the app instead of keystrokes"></textarea>
   <div class="row"><input type="checkbox" id="submit" data-setting="submit"><label for="submit" style="margin:0">Press Enter after pasting</label></div>
-  <label>Shell command (push-to-talk / anything)</label>
-  <input type="text" data-setting="shell" placeholder="e.g. toggle your speech-to-text">
-  <div class="hint">Priority: shell command → custom text → custom keystrokes → preset.</div>
+  <label>Shell command (optional, runs instead of keystrokes)</label>
+  <input type="text" data-setting="shell" placeholder="e.g. a script to trigger">
+  <div class="hint">Priority: shell command → custom text → custom keystrokes → preset.
+  Push-to-talk uses each app's native dictation toggle: Ctrl+D in Claude Code, Ctrl+Shift+D in Codex.</div>
   <script>
     const form = bindForm();
     window.onPIReady = (s) => form.load(s);

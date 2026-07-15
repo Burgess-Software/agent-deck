@@ -129,6 +129,20 @@ export async function sendKeys(combos) {
   }
 }
 
+/** Hold a combo down (for push-to-talk). Pair with releaseKeys. */
+export async function holdKeys(combo) {
+  const parts = combo.toLowerCase().split('+');
+  const xcombo = parts.map((p) => XDOTOOL_KEYS[p] ?? p).join('+');
+  const res = await run('xdotool', ['keydown', '--clearmodifiers', xcombo]);
+  if (!res.ok) throw new Error(`xdotool keydown failed: ${res.stderr || res.err}`);
+}
+
+export async function releaseKeys(combo) {
+  const parts = combo.toLowerCase().split('+');
+  const xcombo = parts.map((p) => XDOTOOL_KEYS[p] ?? p).join('+');
+  await run('xdotool', ['keyup', xcombo]);
+}
+
 async function sendKeysYdotool(combo) {
   const parts = combo.toLowerCase().split('+');
   const codes = parts.map((p) => KEYCODES[p]);

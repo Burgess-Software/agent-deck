@@ -8,7 +8,7 @@ for Linux (OpenDeck), controlling the Codex desktop app.
 | Codex Micro | Agent Deck |
 |---|---|
 | 6 RGB Agent Keys (live thread status) | **Agent Status Key** action — one per thread slot; grey idle · orange (pulsing) working · blue needs input · green done. Press to open that thread via `codex://threads/<id>`. |
-| Command Keys (accept / reject / PTT / new chat) | **Command Key** action — presets for Accept (Enter), Reject/Interrupt (Esc), New chat (Ctrl+N), push-to-talk (Ctrl+Shift+D, Codex's native dictation), plus custom keystrokes/text/shell. |
+| Command Keys (accept / reject / PTT / new chat) | **Command Key** action — presets for Accept (Enter), Reject/Interrupt (Esc), New chat (Ctrl+N), plus custom keystrokes/text/shell. Push-to-talk is true hold-to-talk: Codex dictation records while Ctrl+Shift+D is held, so the deck key holds the shortcut down for as long as you hold the key. |
 | Joystick → 4 preset skills (review PR, debug, refactor) | **Skill Key** action — Review PR, Debug, Refactor, Write tests, Explain, Commit & push, or a custom prompt. Pastes into the composer and (optionally) submits. |
 | Dial → reasoning depth | **Reasoning Dial** action — cycles `model_reasoning_effort` in `~/.codex/config.toml` (minimal → low → medium → high). Works as a key (cycle) or a Stream Deck + encoder (rotate). |
 

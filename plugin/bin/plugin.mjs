@@ -5,7 +5,7 @@ import { StreamDeck, parseArgs } from './lib/protocol.mjs';
 import { AgentState } from './lib/state.mjs';
 import * as icons from './lib/icons.mjs';
 import * as reasoning from './lib/reasoning.mjs';
-import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, APP_WINDOW_CLASS } from './lib/inject.mjs';
+import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -17,7 +17,7 @@ const COMMAND_PRESETS = {
   reject:    { title: 'Reject',   keys: 'esc',          accent: '#e74c3c' },
   interrupt: { title: 'Stop',     keys: 'esc',          accent: '#e74c3c' },
   newchat:   { title: 'New chat', keys: 'ctrl+n',       accent: '#3d8bfd' },
-  ptt:       { title: 'Voice',    keys: 'ctrl+shift+d', accent: '#b48cf2' },
+  ptt:       { title: 'Voice',    keys: 'ctrl+shift+d', accent: '#b48cf2', hold: true },
   custom:    { title: 'Custom',   keys: '',             accent: '#f7821b' },
 };
 
@@ -158,7 +158,35 @@ sd.on('willAppear', (e) => {
   render(e.context);
 });
 
-sd.on('willDisappear', (e) => instances.delete(e.context));
+sd.on('willDisappear', (e) => {
+  const inst = instances.get(e.context);
+  if (inst?.holding) releaseKeys(inst.holding).catch(() => {});
+  instances.delete(e.context);
+});
+
+// Push-to-talk: Codex dictation records only while Ctrl+Shift+D is held, so
+// the deck key mirrors that — shortcut goes down on keyDown, up on keyUp.
+sd.on('keyDown', async (e) => {
+  const inst = instances.get(e.context);
+  if (!inst || inst.action !== `${PREFIX}.command`) return;
+  const preset = COMMAND_PRESETS[inst.settings?.command ?? 'accept'];
+  if (!preset?.hold || inst.settings?.shell || inst.settings?.text) return;
+  const keys = inst.settings?.keys || preset.keys;
+  try {
+    await focusOrLaunch('codex');
+    await sleep(250);
+    await whileFocused(CODEX_CLS, () => holdKeys(keys));
+    inst.holding = keys;
+    sd.setImage(e.context, icons.commandKey({ accent: '#e74c3c' })); // recording
+    // Safety net: never leave the combo stuck if keyUp gets lost.
+    inst.holdTimeout = setTimeout(() => {
+      if (inst.holding) { releaseKeys(inst.holding).catch(() => {}); inst.holding = null; render(e.context); }
+    }, 120000);
+  } catch (err) {
+    console.error('ptt keyDown failed', err);
+    sd.showAlert(e.context);
+  }
+});
 
 sd.on('didReceiveSettings', (e) => {
   const inst = instances.get(e.context);
@@ -169,6 +197,14 @@ sd.on('didReceiveSettings', (e) => {
 sd.on('keyUp', async (e) => {
   const inst = instances.get(e.context);
   if (!inst) return;
+  if (inst.holding) {
+    // end of a push-to-talk hold: release the shortcut, don't run a command
+    clearTimeout(inst.holdTimeout);
+    await releaseKeys(inst.holding).catch(() => {});
+    inst.holding = null;
+    render(e.context);
+    return;
+  }
   const kind = inst.action.slice(PREFIX.length + 1);
   try {
     if (kind === 'agent') await pressAgent(e.context, inst.settings);

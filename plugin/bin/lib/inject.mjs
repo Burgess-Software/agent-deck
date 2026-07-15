@@ -100,25 +100,47 @@ const KEYCODES = {
   delete: 111, insert: 110,
 };
 
+// xdotool key-name translation for the few names that differ from our
+// combo syntax ("esc" -> "Escape" etc.). Everything else passes through.
+const XDOTOOL_KEYS = {
+  esc: 'Escape', enter: 'Return', backspace: 'BackSpace', space: 'space',
+  tab: 'Tab', up: 'Up', down: 'Down', left: 'Left', right: 'Right',
+  pageup: 'Page_Up', pagedown: 'Page_Down', home: 'Home', end: 'End',
+  delete: 'Delete', insert: 'Insert', minus: 'minus', equal: 'equal',
+};
+
 /**
  * Send a key combo like "ctrl+n", "enter", "ctrl+shift+p", or a sequence
  * of combos separated by spaces: "esc esc".
+ *
+ * Codex desktop runs under XWayland, where xdotool (XTEST) delivers
+ * modifier combos reliably; ydotool's uinput path proved flaky for combos
+ * into XWayland windows. Falls back to ydotool if xdotool is unavailable.
  */
 export async function sendKeys(combos) {
   for (const combo of combos.trim().split(/\s+/)) {
     const parts = combo.toLowerCase().split('+');
-    const codes = parts.map((p) => KEYCODES[p]);
-    if (codes.some((c) => c === undefined)) {
-      throw new Error(`unknown key in combo "${combo}"`);
+    const xcombo = parts.map((p) => XDOTOOL_KEYS[p] ?? p).join('+');
+    const res = await run('xdotool', ['key', '--clearmodifiers', xcombo]);
+    if (!res.ok) {
+      await sendKeysYdotool(combo);
     }
-    const seq = [
-      ...codes.map((c) => `${c}:1`),
-      ...codes.slice().reverse().map((c) => `${c}:0`),
-    ];
-    const res = await run('ydotool', ['key', '--key-delay', '12', ...seq]);
-    if (!res.ok) throw new Error(`ydotool failed: ${res.stderr || res.err}`);
     await sleep(60);
   }
+}
+
+async function sendKeysYdotool(combo) {
+  const parts = combo.toLowerCase().split('+');
+  const codes = parts.map((p) => KEYCODES[p]);
+  if (codes.some((c) => c === undefined)) {
+    throw new Error(`unknown key in combo "${combo}"`);
+  }
+  const seq = [
+    ...codes.map((c) => `${c}:1`),
+    ...codes.slice().reverse().map((c) => `${c}:0`),
+  ];
+  const res = await run('ydotool', ['key', '--key-delay', '12', ...seq]);
+  if (!res.ok) throw new Error(`ydotool failed: ${res.stderr || res.err}`);
 }
 
 /** Put text in the focused input via clipboard paste; restores clipboard. */

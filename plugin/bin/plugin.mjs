@@ -90,13 +90,13 @@ function renderAgent(context, settings) {
 function renderCommand(context, settings) {
   const preset = COMMAND_PRESETS[settings?.command ?? 'accept'] ?? COMMAND_PRESETS.accept;
   sd.setImage(context, icons.commandKey({ accent: preset.accent }));
-  sd.setTitle(context, `\n\n\n${settings?.label || preset.title}`);
+  sd.setTitle(context, `\n\n${wrapLabel(settings?.label || preset.title)}`);
 }
 
 function renderSkill(context, settings) {
   const preset = SKILL_PRESETS[settings?.skill ?? 'review'] ?? SKILL_PRESETS.review;
   sd.setImage(context, icons.commandKey({ accent: '#f7c744' }));
-  sd.setTitle(context, `\n\n\n${settings?.label || preset.title}`);
+  sd.setTitle(context, `\n\n${wrapLabel(settings?.label || preset.title)}`);
 }
 
 function renderReasoning(context) {

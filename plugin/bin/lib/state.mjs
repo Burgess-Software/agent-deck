@@ -49,6 +49,22 @@ export class AgentState extends EventEmitter {
   /** sessions sorted most-recently-active first */
   get() { return this.sessions; }
 
+  /**
+   * Latest rate-limit usage, read from the tail of the most recently written
+   * rollout file (Codex embeds a rate_limits object each turn). Returns the
+   * weekly window's used_percent. Cached ~30s. null if unknown.
+   */
+  async getUsage() {
+    if (this._usage && Date.now() - this._usage.ts < 30000) return this._usage.value;
+    const value = await readUsage();
+    // keep last known value if this read found nothing (between turns)
+    this._usage = { value: value ?? this._usage?.value ?? null, ts: Date.now() };
+    return this._usage.value;
+  }
+
+  /** Last-read usage without triggering I/O (for synchronous rendering). */
+  getUsageCached() { return this._usage?.value ?? null; }
+
   async refresh() {
     const sessions = await this.scan();
     const changed = JSON.stringify(sessions) !== JSON.stringify(this.sessions);
@@ -129,6 +145,68 @@ export class AgentState extends EventEmitter {
     out.sort((a, b) => b.ts - a.ts);
     return out;
   }
+}
+
+// Parse the JSON object that starts at the first "{" at/after `from`.
+function parseObjectAt(text, from) {
+  const start = text.indexOf('{', from);
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) {
+      try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; }
+    }
+  }
+  return null;
+}
+
+async function readUsage() {
+  // newest rollout file across today + yesterday
+  const days = [new Date(), new Date(Date.now() - 86400000)].map((d) =>
+    path.join(CODEX_SESSIONS, String(d.getFullYear()),
+      String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')));
+  let newest = null;
+  for (const dir of days) {
+    let entries;
+    try { entries = await fsp.readdir(dir); } catch { continue; }
+    for (const e of entries) {
+      if (!e.startsWith('rollout-') || !e.endsWith('.jsonl')) continue;
+      const p = path.join(dir, e);
+      try {
+        const st = await fsp.stat(p);
+        if (!newest || st.mtimeMs > newest.mtime) newest = { file: p, mtime: st.mtimeMs, size: st.size };
+      } catch { /* skip */ }
+    }
+  }
+  if (!newest) return null;
+  try {
+    const len = Math.min(newest.size, 256 * 1024);
+    const fh = await fsp.open(newest.file, 'r');
+    const buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, newest.size - len);
+    await fh.close();
+    const text = buf.toString('utf8');
+    // walk backwards through rate_limits occurrences until one parses
+    let idx = text.lastIndexOf('"rate_limits"');
+    while (idx >= 0) {
+      const obj = parseObjectAt(text, idx + '"rate_limits"'.length);
+      const cands = [obj?.primary, obj?.secondary].filter((w) => w && typeof w.used_percent === 'number');
+      if (cands.length) {
+        // weekly = the widest window (a weekly limit is larger than any 5h one)
+        const weekly = cands.reduce((a, b) => (b.window_minutes > (a?.window_minutes ?? -1) ? b : a), null);
+        return { percent: Math.round(weekly.used_percent), resetsAt: weekly.resets_at, windowMinutes: weekly.window_minutes };
+      }
+      idx = text.lastIndexOf('"rate_limits"', idx - 1);
+    }
+  } catch { /* fall through */ }
+  return null;
 }
 
 // Project name from a git remote URL: git@github.com:Org/repo.git -> "repo".

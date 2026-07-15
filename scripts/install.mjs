@@ -26,7 +26,7 @@ const log = (m) => console.log(`[agent-deck] ${m}`);
 const { manifestIcon } = await import(path.join(PLUGIN_SRC, 'bin/lib/icons.mjs'));
 const iconDir = path.join(PLUGIN_SRC, 'icons');
 fs.mkdirSync(iconDir, { recursive: true });
-for (const kind of ['plugin', 'agent', 'command', 'skill', 'reasoning']) {
+for (const kind of ['plugin', 'agent', 'command', 'skill', 'reasoning', 'model', 'usage']) {
   fs.writeFileSync(path.join(iconDir, `${kind}.png`), manifestIcon(kind, 144));
   fs.writeFileSync(path.join(iconDir, `${kind}@2x.png`), manifestIcon(kind, 288));
 }

@@ -22,6 +22,8 @@ const ACTIONS = {
   command:   { name: 'Command Key',      icon: 'icons/command',   pi: 'pi/command.html' },
   skill:     { name: 'Skill Key',        icon: 'icons/skill',     pi: 'pi/skill.html' },
   reasoning: { name: 'Reasoning Dial',   icon: 'icons/reasoning', pi: 'pi/reasoning.html' },
+  model:     { name: 'Model Switcher',   icon: 'icons/model',     pi: 'pi/model.html' },
+  usage:     { name: 'Weekly Usage',     icon: 'icons/usage',     pi: 'pi/usage.html' },
 };
 
 function instance(kind, position, settings) {
@@ -60,10 +62,10 @@ const keys = [
   instance('command', 7, { command: 'newchat' }),
   instance('command', 8, { command: 'ptt' }),
   instance('command', 9, { command: 'interrupt' }),
-  instance('skill', 10, { skill: 'review' }),
-  instance('skill', 11, { skill: 'debug' }),
-  instance('skill', 12, { skill: 'refactor' }),
-  instance('skill', 13, { skill: 'tests' }),
+  instance('model', 10, {}),
+  instance('usage', 11, {}),
+  null, // 12 — free for a custom key
+  null, // 13 — free for a custom key
   instance('reasoning', 14, {}),
 ];
 

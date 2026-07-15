@@ -55,6 +55,24 @@
         }
       },
       "States": [{ "Image": "icons/reasoning", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.thomasburgess.agentdeck.model",
+      "Name": "Model Switcher",
+      "Tooltip": "Open Codex's model picker (Ctrl+Shift+M) on the current thread.",
+      "Icon": "icons/model",
+      "PropertyInspectorPath": "pi/model.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/model", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.thomasburgess.agentdeck.usage",
+      "Name": "Weekly Usage",
+      "Tooltip": "Show your Codex weekly usage percentage. Press to refresh.",
+      "Icon": "icons/usage",
+      "PropertyInspectorPath": "pi/usage.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/usage", "TitleAlignment": "bottom" }]
     }
   ]
 }

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
+<body>
+  <label>Key label</label>
+  <input type="text" data-setting="label" placeholder="Model">
+  <label>Shortcut (defaults to Codex's model picker)</label>
+  <input type="text" data-setting="keys" placeholder="ctrl+shift+m">
+  <div class="hint">
+    Opens Codex's model picker on the current thread (Ctrl+Shift+M is built in,
+    no setup needed). Pick the model there. If you bind a direct "switch model"
+    shortcut in Codex, put it here instead.
+  </div>
+  <script>
+    const form = bindForm();
+    window.onPIReady = (s) => form.load(s);
+    window.onSettings = (s) => form.load(s);
+  </script>
+</body></html>

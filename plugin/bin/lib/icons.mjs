@@ -67,6 +67,31 @@ export function commandKey({ accent = '#f7821b' } = {}) {
   return c.toDataURI();
 }
 
+/** Model switcher: dark tile with stacked "layers" glyph. */
+export function modelKey() {
+  const c = base('#262a34');
+  const cx = S / 2, cy = 26;
+  for (const [dy, col] of [[8, '#3a3f4b'], [4, '#6b7280'], [0, ACCENT]]) {
+    // simple stacked diamonds
+    for (let k = -12; k <= 12; k++) {
+      const h = 6 - Math.abs(k) / 2;
+      c.fillRect(cx + k, cy + dy - h / 2, 1, h, hex(col));
+    }
+  }
+  return c.toDataURI();
+}
+
+/** Weekly usage: ring gauge filled to percent, color-coded. */
+export function usageKey({ percent = 0 } = {}) {
+  const c = base('#262a34');
+  const cx = S / 2, cy = 28, rO = 20, rI = 13;
+  c.ringSegment(cx, cy, rO, rI, 0, 360, hex('#3a3f4b'));
+  const col = percent >= 85 ? '#e74c3c' : percent >= 60 ? '#f7c744' : '#27ae60';
+  const sweep = Math.min(360, Math.max(0, Math.round(3.6 * percent)));
+  if (sweep > 0) c.ringSegment(cx, cy, rO, rI, 0, sweep, hex(col));
+  return c.toDataURI();
+}
+
 /** Reasoning dial: gauge arc filled to level. */
 export function reasoningKey({ frac = 1 } = {}) {
   const c = base('#262a34');
@@ -100,6 +125,16 @@ export function manifestIcon(kind, size = 144) {
   } else if (kind === 'reasoning') {
     c.ringSegment(cx, cy + 8 * u, 22 * u, 14 * u, 180, 360, hex('#3a3f4b'));
     c.ringSegment(cx, cy + 8 * u, 22 * u, 14 * u, 180, 320, hex('#3d8bfd'));
+  } else if (kind === 'model') {
+    for (const [dy, col] of [[16, '#3a3f4b'], [8, '#6b7280'], [0, '#e8e8e3']]) {
+      for (let k = -22 * u; k <= 22 * u; k++) {
+        const h = (12 - Math.abs(k) / (2 * u)) * u;
+        if (h > 0) c.fillRect(cx + k, cy + dy - h / 2, u, h, hex(col));
+      }
+    }
+  } else if (kind === 'usage') {
+    c.ringSegment(cx, cy, 22 * u, 14 * u, 0, 360, hex('#3a3f4b'));
+    c.ringSegment(cx, cy, 22 * u, 14 * u, 0, 130, hex('#27ae60'));
   }
   return c.toPNG();
 }

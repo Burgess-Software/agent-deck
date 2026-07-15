@@ -8,7 +8,7 @@
     the same combo below.
   </div>
   <label>Cycle shortcut (key press) — match your Codex binding</label>
-  <input type="text" data-setting="cycleKeys" placeholder="ctrl+alt+r">
+  <input type="text" data-setting="cycleKeys" placeholder="ctrl+alt+e">
   <label>Key label</label>
   <input type="text" data-setting="label" placeholder="Reason">
   <label>Increase shortcut (encoder rotate right, optional)</label>
@@ -22,7 +22,7 @@
   </div>
   <script>
     const form = bindForm();
-    window.onPIReady = (s) => { if (!('cycleKeys' in s)) s.cycleKeys = 'ctrl+alt+r'; form.load(s); };
+    window.onPIReady = (s) => { if (!('cycleKeys' in s)) s.cycleKeys = 'ctrl+alt+e'; form.load(s); };
     window.onSettings = (s) => form.load(s);
   </script>
 </body></html>

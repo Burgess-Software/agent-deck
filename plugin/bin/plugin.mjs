@@ -7,9 +7,12 @@ import * as icons from './lib/icons.mjs';
 import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
 
 // Default shortcut the reasoning key sends. Bind this to "Cycle reasoning
-// effort" in Codex → Settings → Keyboard Shortcuts (it has no default). The
-// increase/decrease variants are used by an encoder's rotation if bound.
-const DEFAULT_REASONING_CYCLE = 'ctrl+alt+r';
+// effort" in Codex → Settings → Keyboard Shortcuts (it has no default). NOT
+// ctrl+alt+r — that's Codex's built-in "Rename task". The increase/decrease
+// variants are used by an encoder's rotation if bound.
+const DEFAULT_REASONING_CYCLE = 'ctrl+alt+e';
+// Codex's built-in "open model picker" shortcut (no setup needed).
+const MODEL_PICKER_KEYS = 'ctrl+shift+m';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -111,6 +114,18 @@ function renderReasoning(context, settings) {
   sd.setTitle(context, `\n\n${wrapLabel(settings?.label || 'Reason')}`);
 }
 
+function renderModel(context, settings) {
+  sd.setImage(context, icons.modelKey());
+  sd.setTitle(context, `\n\n${wrapLabel(settings?.label || 'Model')}`);
+}
+
+function renderUsage(context, settings) {
+  const u = state.getUsageCached();
+  const pct = u ? u.percent : null;
+  sd.setImage(context, icons.usageKey({ percent: pct ?? 0 }));
+  sd.setTitle(context, `\n\n\n${pct == null ? '—' : `${pct}%`}`);
+}
+
 function render(context) {
   const inst = instances.get(context);
   if (!inst) return;
@@ -120,6 +135,8 @@ function render(context) {
     else if (kind === 'command') renderCommand(context, inst.settings);
     else if (kind === 'skill') renderSkill(context, inst.settings);
     else if (kind === 'reasoning') renderReasoning(context, inst.settings);
+    else if (kind === 'model') renderModel(context, inst.settings);
+    else if (kind === 'usage') renderUsage(context, inst.settings);
   } catch (e) {
     console.error(`render ${kind} failed`, e);
   }
@@ -172,6 +189,21 @@ async function pressSkill(context, settings) {
   await focusOrLaunch('codex');
   await sleep(350);
   await whileFocused(CODEX_CLS, () => pasteText(prompt, { submit: settings?.autosend !== false }));
+  sd.showOk(context);
+}
+
+async function pressModel(context, settings) {
+  const keys = settings?.keys || MODEL_PICKER_KEYS;
+  await focusOrLaunch('codex');
+  await sleep(250);
+  await whileFocused(CODEX_CLS, () => sendKeys(keys));
+  sd.showOk(context);
+}
+
+async function pressUsage(context) {
+  // refresh from disk and redraw
+  await state.getUsage().catch(() => {});
+  renderAll(['usage']);
   sd.showOk(context);
 }
 
@@ -248,6 +280,8 @@ sd.on('keyUp', async (e) => {
     else if (kind === 'command') await pressCommand(e.context, inst.settings);
     else if (kind === 'skill') await pressSkill(e.context, inst.settings);
     else if (kind === 'reasoning') await pressReasoning(e.context, inst.settings, 0);
+    else if (kind === 'model') await pressModel(e.context, inst.settings);
+    else if (kind === 'usage') await pressUsage(e.context);
   } catch (err) {
     console.error(`keyUp ${kind} failed`, err);
     sd.showAlert(e.context);
@@ -277,7 +311,17 @@ setInterval(() => {
   if (state.get().some((s) => s.status === 'working')) renderAll(['agent']);
 }, 900);
 
+// Refresh weekly usage periodically (only if a usage key is on screen).
+setInterval(async () => {
+  const hasUsage = [...instances.values()].some((i) => i.action === `${PREFIX}.usage`);
+  if (!hasUsage) return;
+  const before = JSON.stringify(state.getUsageCached());
+  await state.getUsage().catch(() => {});
+  if (JSON.stringify(state.getUsageCached()) !== before) renderAll(['usage']);
+}, 60000);
+
 await sd.readyPromise;
 await state.start();
+await state.getUsage().catch(() => {}); // prime the usage cache before first paint
 renderAll();
 console.log(`agentdeck registered as ${args.pluginUUID}`);

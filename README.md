@@ -9,8 +9,10 @@ for Linux (OpenDeck), controlling the Codex desktop app.
 |---|---|
 | 6 RGB Agent Keys (live thread status) | **Agent Status Key** action — one per thread slot; grey idle · orange (pulsing) working · blue needs input · green done. Press to open that thread via `codex://threads/<id>`. |
 | Command Keys (accept / reject / PTT / new chat) | **Command Key** action — presets for Accept (Enter), Reject/Interrupt (Esc), New chat (Ctrl+N), plus custom keystrokes/text/shell. Push-to-talk is true hold-to-talk: Codex dictation records while Ctrl+Shift+D is held, so the deck key holds the shortcut down for as long as you hold the key. |
-| Joystick → 4 preset skills (review PR, debug, refactor) | **Skill Key** action — Review PR, Debug, Refactor, Write tests, Explain, Commit & push, or a custom prompt. Pastes into the composer and (optionally) submits. |
-| Dial → reasoning depth | **Reasoning Dial** action — sends Codex's *Cycle reasoning effort* command to the **current thread** (Light → … → Ultra). That command has no default shortcut, so bind one in Codex → Settings → Keyboard Shortcuts and enter the same combo in the key's settings (default `ctrl+alt+r`). Works as a key (cycle) or a Stream Deck + encoder (increase/decrease). |
+| Joystick → 4 preset skills (review PR, debug, refactor) | **Skill Key** action (available but not in the default layout) — Review PR, Debug, Refactor, Write tests, Explain, Commit & push, or a custom prompt. Pastes into the composer and (optionally) submits. |
+| Dial → reasoning depth | **Reasoning Dial** action — sends Codex's *Cycle reasoning effort* command to the **current thread** (Light → … → Ultra). That command has no default shortcut, so bind one in Codex → Settings → Keyboard Shortcuts and enter the same combo in the key's settings (default `ctrl+alt+e` — note `ctrl+alt+r` is Codex's built-in Rename task). Works as a key (cycle) or a Stream Deck + encoder (increase/decrease). |
+| — | **Model Switcher** action — opens Codex's model picker on the current thread (Ctrl+Shift+M, built in). |
+| — | **Weekly Usage** action — shows your Codex weekly usage % (from the session's rate-limit data); ring is green/amber/red, press to refresh. |
 
 ## How it works
 
@@ -41,7 +43,7 @@ KDE Plasma (Wayland). Config backups are written next to the originals
 |---|---|---|---|---|
 | Thread 0 | Thread 1 | Thread 2 | Thread 3 | Thread 4 |
 | Accept | Reject | New chat | Voice (PTT) | Stop |
-| Review PR | Debug | Refactor | Tests | **Reasoning dial** |
+| Model | Weekly usage | (free) | (free) | **Reasoning dial** |
 
 ## Uninstall
 

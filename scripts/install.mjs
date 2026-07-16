@@ -62,6 +62,40 @@ if (toml.includes('agent-deck')) {
   log(`codex notify installed (backup: config.toml.bak-agentdeck-${STAMP})`);
 }
 
+// 3b. provision reasoning-effort keybindings in ~/.codex/keybindings.json.
+// These commands ship with no default shortcut; the reasoning key sends them.
+// Merge without clobbering existing bindings (skip any command/combo already set).
+const KEYBINDINGS = path.join(os.homedir(), '.codex/keybindings.json');
+const WANT = [
+  { command: 'composer.cycleReasoningEffort', key: 'Ctrl+Alt+E' },
+  { command: 'composer.increaseReasoningEffort', key: 'Ctrl+Alt+Up' },
+  { command: 'composer.decreaseReasoningEffort', key: 'Ctrl+Alt+Down' },
+];
+try {
+  let existing = [];
+  if (fs.existsSync(KEYBINDINGS)) {
+    try { existing = JSON.parse(fs.readFileSync(KEYBINDINGS, 'utf8')); } catch { existing = []; }
+    if (!Array.isArray(existing)) existing = [];
+  }
+  const boundCommands = new Set(existing.map((b) => b.command));
+  const usedKeys = new Set(existing.filter((b) => b.key).map((b) => b.key.toLowerCase()));
+  let added = 0;
+  for (const w of WANT) {
+    if (boundCommands.has(w.command) || usedKeys.has(w.key.toLowerCase())) continue;
+    existing.push(w);
+    added++;
+  }
+  if (added > 0) {
+    fs.mkdirSync(path.dirname(KEYBINDINGS), { recursive: true });
+    fs.writeFileSync(KEYBINDINGS, `${JSON.stringify(existing, null, 2)}\n`);
+    log(`reasoning keybindings written to ~/.codex/keybindings.json (restart Codex to apply)`);
+  } else {
+    log('reasoning keybindings already present');
+  }
+} catch (e) {
+  log(`WARNING: could not write keybindings.json: ${e.message}`);
+}
+
 // 4. remove agent-deck hooks from ~/.claude/settings.json (older versions)
 try {
   const settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, 'utf8'));

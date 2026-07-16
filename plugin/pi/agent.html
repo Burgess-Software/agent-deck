@@ -1,13 +1,19 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="pi.css"><script src="pi.js"></script></head>
 <body>
-  <label>Thread slot (0 = most recent)</label>
+  <label>Stable thread slot</label>
   <select data-setting="slot">
-    <option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+    <option>0</option><option>1</option><option>2</option><option>3</option><option>4</option>
+    <option>5</option><option>6</option><option>7</option><option>8</option><option>9</option>
   </select>
+  <label class="row">
+    <input type="checkbox" data-setting="usageWhenEmpty">
+    Show weekly capacity left when empty
+  </label>
   <div class="hint">
     Colors: grey idle · orange working · blue needs input · green done.
-    Press the key to open that Codex thread.
+    A thread keeps this key while its activity and status update. Press the key
+    to open that Codex thread; when capacity left is shown, press to refresh it.
   </div>
   <script>
     const form = bindForm();

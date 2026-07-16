@@ -52,21 +52,16 @@ function instance(kind, position, settings) {
 }
 
 const keys = [
-  instance('agent', 0, { slot: '0' }),
-  instance('agent', 1, { slot: '1' }),
-  instance('agent', 2, { slot: '2' }),
-  instance('agent', 3, { slot: '3' }),
-  instance('agent', 4, { slot: '4' }),
-  instance('command', 5, { command: 'accept' }),
-  instance('command', 6, { command: 'reject' }),
-  instance('command', 7, { command: 'newchat' }),
-  instance('command', 8, { command: 'ptt' }),
-  instance('command', 9, { command: 'interrupt' }),
-  instance('model', 10, {}),
-  instance('usage', 11, {}),
-  null, // 12 — free for a custom key
-  null, // 13 — free for a custom key
-  instance('reasoning', 14, {}),
+  ...Array.from({ length: 10 }, (_, slot) =>
+    instance('agent', slot, {
+      slot: String(slot),
+      ...(slot === 9 ? { usageWhenEmpty: true } : {}),
+    })),
+  instance('command', 10, { command: 'accept' }),
+  instance('command', 11, { command: 'reject' }),
+  instance('command', 12, { command: 'newchat' }),
+  instance('command', 13, { command: 'ptt' }),
+  instance('command', 14, { command: 'interrupt' }),
 ];
 
 const profile = { id: PROFILE, keys, sliders: [], infobars: [] };

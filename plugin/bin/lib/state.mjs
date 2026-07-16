@@ -12,14 +12,43 @@ import fsp from 'node:fs/promises';
 import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
+import { StableSessionSlots } from './slots.mjs';
 
 export const STATE_DIR = path.join(os.homedir(), '.local/share/agentdeck');
 const CODEX_STATE = path.join(STATE_DIR, 'state/codex');
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex/sessions');
+const CODEX_SESSION_INDEX = path.join(os.homedir(), '.codex/session_index.jsonl');
+const SLOT_STATE = path.join(STATE_DIR, 'state/session-slots.json');
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // hide sessions idle > 12h
 const CODEX_ACTIVE_WINDOW_MS = 15 * 1000;   // file touched this recently = working
 const POLL_MS = 3000;
+
+function sameNumberSet(a, b) {
+  return a.size === b.size && [...a].every((value) => b.has(value));
+}
+
+function loadSlotState() {
+  try {
+    const value = JSON.parse(fs.readFileSync(SLOT_STATE, 'utf8'));
+    if (value?.version !== 1 || !Array.isArray(value.bindings)) return {};
+    return { bindings: value.bindings, knownRollouts: value.knownRollouts };
+  } catch {
+    return {};
+  }
+}
+
+async function persistSlotState(value) {
+  const tmp = `${SLOT_STATE}.${process.pid}.tmp`;
+  await fsp.mkdir(path.dirname(SLOT_STATE), { recursive: true });
+  try {
+    await fsp.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`);
+    await fsp.rename(tmp, SLOT_STATE);
+  } catch (error) {
+    await fsp.rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
 
 export class AgentState extends EventEmitter {
   constructor() {
@@ -27,7 +56,15 @@ export class AgentState extends EventEmitter {
     fs.mkdirSync(CODEX_STATE, { recursive: true });
     this.codexMeta = new Map();     // file -> {id, cwd}
     this.codexStatus = new Map();   // id -> {status, ts}
-    this.sessions = [];
+    this.threadTitles = new Map();  // id -> Codex-generated chat title
+    this.sessionIndexStamp = '';
+    this.discoveredSessions = [];
+    this.activeSlots = new Set();
+    this.fallbackSlots = new Set();
+    this.slotAllocator = new StableSessionSlots(loadSlotState());
+    this.sessions = this.slotAllocator.bindings.map(() => null);
+    this.slotStateDirty = false;
+    this.stateQueue = Promise.resolve();
   }
 
   start() {
@@ -46,13 +83,30 @@ export class AgentState extends EventEmitter {
     this.notifyWatcher?.close();
   }
 
-  /** sessions sorted most-recently-active first */
+  /** sessions indexed by their stable Stream Deck slot (holes are null) */
   get() { return this.sessions; }
+
+  /** Update the logical slot numbers currently represented by visible keys. */
+  setActiveSlots(slots, fallbackSlots = []) {
+    const next = new Set([...slots]
+      .map((slot) => Number(slot))
+      .filter((slot) => Number.isInteger(slot) && slot >= 0));
+    const nextFallbacks = new Set([...fallbackSlots]
+      .map((slot) => Number(slot))
+      .filter((slot) => Number.isInteger(slot) && next.has(slot)));
+    return this.enqueue(async () => {
+      if (sameNumberSet(next, this.activeSlots)
+          && sameNumberSet(nextFallbacks, this.fallbackSlots)) return;
+      this.activeSlots = next;
+      this.fallbackSlots = nextFallbacks;
+      await this.applySlots();
+    });
+  }
 
   /**
    * Latest rate-limit usage, read from the tail of the most recently written
    * rollout file (Codex embeds a rate_limits object each turn). Returns the
-   * weekly window's used_percent. Cached ~30s. null if unknown.
+   * weekly window's used percentage. Cached ~30s. null if unknown.
    */
   async getUsage() {
     if (this._usage && Date.now() - this._usage.ts < 30000) return this._usage.value;
@@ -65,11 +119,40 @@ export class AgentState extends EventEmitter {
   /** Last-read usage without triggering I/O (for synchronous rendering). */
   getUsageCached() { return this._usage?.value ?? null; }
 
-  async refresh() {
-    const sessions = await this.scan();
+  refresh() {
+    return this.enqueue(async () => {
+      this.discoveredSessions = await this.scan();
+      await this.applySlots();
+    });
+  }
+
+  enqueue(work) {
+    const next = this.stateQueue.then(work, work);
+    this.stateQueue = next.catch(() => {});
+    return next;
+  }
+
+  async applySlots() {
+    const result = this.slotAllocator.reconcile(
+      this.discoveredSessions,
+      this.activeSlots,
+      this.fallbackSlots,
+    );
+    const sessions = result.sessions;
     const changed = JSON.stringify(sessions) !== JSON.stringify(this.sessions);
     this.sessions = sessions;
+    if (result.stateChanged) this.slotStateDirty = true;
     if (changed) this.emit('change');
+    // Rendering must not depend on a successful state-file write. Keep a dirty
+    // flag so a transient failure is retried by the next watcher/poll refresh.
+    if (this.slotStateDirty) {
+      try {
+        await persistSlotState(this.slotAllocator.snapshot());
+        this.slotStateDirty = false;
+      } catch (error) {
+        console.error('could not persist stable slots; will retry', error);
+      }
+    }
   }
 
   async scan() {
@@ -98,6 +181,11 @@ export class AgentState extends EventEmitter {
       }
     } catch { /* skip */ }
 
+    // Codex appends generated/renamed chat titles here. Check it on every poll
+    // so a title that arrives just after thread creation appears immediately;
+    // the reader only reparses when its mtime or size changes.
+    const threadTitles = await this.readSessionTitles();
+
     // Dedupe by session id: resumes create new rollout files with the same
     // id — keep only the newest file per id.
     const newestById = new Map();
@@ -108,15 +196,18 @@ export class AgentState extends EventEmitter {
       let meta = this.codexMeta.get(file);
       if (!meta) {
         meta = await readCodexMeta(file);
-        if (meta) this.codexMeta.set(file, meta);
+        // A just-created rollout may not contain its first user_message yet.
+        // Retry those files until either the fallback snippet or the generated
+        // index title exists instead of permanently caching the project name.
+        if (meta?.hasSnippet || threadTitles.has(meta?.id)) this.codexMeta.set(file, meta);
       }
       if (!meta) continue;
       const prev = newestById.get(meta.id);
-      if (!prev || stat.mtimeMs > prev.stat.mtimeMs) newestById.set(meta.id, { meta, stat });
+      if (!prev || stat.mtimeMs > prev.stat.mtimeMs) newestById.set(meta.id, { meta, stat, file });
     }
 
     const out = [];
-    for (const { meta, stat } of newestById.values()) {
+    for (const { meta, stat, file } of newestById.values()) {
       const age = Date.now() - stat.mtimeMs;
       const prev = this.codexStatus.get(meta.id);
       const notified = notifyState.get(meta.id) || notifyState.get('latest');
@@ -137,14 +228,43 @@ export class AgentState extends EventEmitter {
         id: meta.id,
         status,
         cwd: meta.cwd,
-        project: meta.cwd ? path.basename(meta.cwd) : '?',
-        title: meta.title,
+        project: meta.project || (meta.cwd ? path.basename(meta.cwd) : '?'),
+        title: threadTitles.get(meta.id) || meta.title,
         ts: stat.mtimeMs,
+        rolloutPath: file,
       });
     }
     out.sort((a, b) => b.ts - a.ts);
     return out;
   }
+
+  async readSessionTitles() {
+    try {
+      const stat = await fsp.stat(CODEX_SESSION_INDEX);
+      const stamp = `${stat.mtimeMs}:${stat.size}`;
+      if (stamp === this.sessionIndexStamp) return this.threadTitles;
+
+      const titles = parseSessionTitles(await fsp.readFile(CODEX_SESSION_INDEX, 'utf8'));
+      this.threadTitles = titles;
+      this.sessionIndexStamp = stamp;
+    } catch { /* keep the last good snapshot; rollout snippets remain a fallback */ }
+    return this.threadTitles;
+  }
+}
+
+// session_index.jsonl is append-only. Later entries win so manual renames and
+// regenerated titles are reflected without restarting the plugin.
+export function parseSessionTitles(text) {
+  const titles = new Map();
+  for (const line of String(text).split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      const title = typeof entry.thread_name === 'string' ? cleanSnippet(entry.thread_name) : '';
+      if (entry.id && title) titles.set(entry.id, title);
+    } catch { /* ignore a partial final line while Codex is writing */ }
+  }
+  return titles;
 }
 
 // Parse the JSON object that starts at the first "{" at/after `from`.
@@ -201,7 +321,11 @@ async function readUsage() {
       if (cands.length) {
         // weekly = the widest window (a weekly limit is larger than any 5h one)
         const weekly = cands.reduce((a, b) => (b.window_minutes > (a?.window_minutes ?? -1) ? b : a), null);
-        return { percent: Math.round(weekly.used_percent), resetsAt: weekly.resets_at, windowMinutes: weekly.window_minutes };
+        return {
+          usedPercent: Math.round(weekly.used_percent),
+          resetsAt: weekly.resets_at,
+          windowMinutes: weekly.window_minutes,
+        };
       }
       idx = text.lastIndexOf('"rate_limits"', idx - 1);
     }
@@ -220,7 +344,7 @@ function projectFromGit(git) {
 // Compact a first-user-message into a label: strip markdown links/urls/
 // punctuation, collapse whitespace, cap length.
 function cleanSnippet(msg) {
-  return String(msg)
+  return String(msg ?? '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // [text](url) -> text
     .replace(/https?:\/\/\S+/g, '')          // bare urls
     .replace(/[`*_#>]/g, '')                 // markdown punctuation
@@ -229,11 +353,10 @@ function cleanSnippet(msg) {
     .slice(0, 48);
 }
 
-// Read the rollout for id, cwd, and label. Label = git repo name when the
-// thread is in a repo (available on the first session_meta line, so we can
-// stop immediately); otherwise, for scratch-dir threads, keep reading to the
-// first real user message and use that snippet. Cached per file.
-function readCodexMeta(file) {
+// Read the rollout for id, cwd, project, and a first-message fallback title.
+// The generated Codex title from session_index.jsonl takes precedence during
+// scan, but the fallback keeps new threads distinct before that title arrives.
+export function readCodexMeta(file) {
   return new Promise((resolve) => {
     const fallbackId = path.basename(file, '.jsonl').replace(/^rollout-[\dT-]+-(?=[0-9a-f])/, '');
     let id = '', cwd = '', gitProject = null, snippet = '', lines = 0, settled = false;
@@ -245,9 +368,8 @@ function readCodexMeta(file) {
       rl.close();
       stream.destroy();
       const project = gitProject || (cwd ? path.basename(cwd) : 'thread');
-      // repo threads: repo name; scratch dirs: first-message snippet, else dir
-      const title = gitProject ? project : (snippet || project);
-      resolve({ id: id || fallbackId, cwd, project, title });
+      const title = snippet || project;
+      resolve({ id: id || fallbackId, cwd, project, title, hasSnippet: !!snippet });
     };
     rl.on('line', (line) => {
       if (settled) return;
@@ -259,7 +381,6 @@ function readCodexMeta(file) {
         id = p.session_id || p.id || id;
         cwd = p.cwd || cwd;
         gitProject = projectFromGit(p.git);
-        if (gitProject) return finish(); // in a repo — no need to read further
       }
       if (!snippet && o.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') {
         snippet = cleanSnippet(p.message);

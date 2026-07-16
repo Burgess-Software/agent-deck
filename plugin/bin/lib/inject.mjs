@@ -16,6 +16,20 @@ function run(cmd, args, opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// KWin script output is written to the user journal. It is normally visible
+// immediately after Script.run returns, so check right away and only wait when
+// journald is actually lagging instead of adding a fixed delay to every key.
+async function waitForJournalMarker(marker, since, maxWaitMs = 120) {
+  const deadline = Date.now() + maxWaitMs;
+  do {
+    const journal = await run('journalctl', ['--user', '-n', '200', '-o', 'cat', '--since', since]);
+    const line = journal.stdout.split('\n').reverse().find((entry) => entry.includes(marker));
+    if (line) return line;
+    if (Date.now() >= deadline) return null;
+    await sleep(10);
+  } while (true);
+}
+
 export const APP_WINDOW_CLASS = {
   claude: 'claude-desktop',
   codex: 'codex-desktop',
@@ -77,10 +91,9 @@ export async function focusWindow(cls, captionSubstr = '') {
     ]);
     if (!ran.ok) return false;
     // The script's print() lands in the user journal; read the marker back.
-    await sleep(120);
-    const journal = await run('journalctl', ['--user', '-n', '200', '-o', 'cat', '--since', '-15s']);
-    if (journal.stdout.includes(`${marker}:FOUND`)) return true;
-    if (journal.stdout.includes(`${marker}:MISSING`)) return false;
+    const markerLine = await waitForJournalMarker(marker, '-15s');
+    if (markerLine?.includes(`${marker}:FOUND`)) return true;
+    if (markerLine?.includes(`${marker}:MISSING`)) return false;
     return true; // journal unavailable — assume the activation worked
   } finally {
     unlink(file).catch(() => {});
@@ -197,9 +210,7 @@ export async function activeWindowClass() {
       '--session', '--print-reply', '--dest=org.kde.KWin', '/Scripting',
       'org.kde.kwin.Scripting.unloadScript', `string:${name}`,
     ]);
-    await sleep(100);
-    const journal = await run('journalctl', ['--user', '-n', '200', '-o', 'cat', '--since', '-10s']);
-    const hit = journal.stdout.split('\n').reverse().find((l) => l.includes(marker));
+    const hit = await waitForJournalMarker(marker, '-10s', 100);
     return hit ? hit.split(`${marker}:`)[1]?.trim() ?? null : null;
   } finally {
     unlink(file).catch(() => {});

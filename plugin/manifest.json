@@ -68,7 +68,7 @@
     {
       "UUID": "com.thomasburgess.agentdeck.usage",
       "Name": "Weekly Usage",
-      "Tooltip": "Show your Codex weekly usage percentage. Press to refresh.",
+      "Tooltip": "Show your Codex weekly capacity remaining. Press to refresh.",
       "Icon": "icons/usage",
       "PropertyInspectorPath": "pi/usage.html",
       "Controllers": ["Keypad"],

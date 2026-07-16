@@ -3,8 +3,12 @@
 // controlling the Codex desktop app.
 import { StreamDeck, parseArgs } from './lib/protocol.mjs';
 import { AgentState } from './lib/state.mjs';
+import { shouldShowUsageWhenEmpty, usesUsageWhenEmpty } from './lib/agent-display.mjs';
+import { formatAgentLabel, wrapLabel } from './lib/labels.mjs';
 import * as icons from './lib/icons.mjs';
 import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
+import { releaseManagedHold, startManagedHold } from './lib/ptt.mjs';
+import { remainingPercent } from './lib/usage.mjs';
 
 // Codex's built-in "open model picker" shortcut (no setup needed).
 const MODEL_PICKER_KEYS = 'ctrl+shift+m';
@@ -50,49 +54,41 @@ const state = new AgentState();
 // context -> {action, settings}
 const instances = new Map();
 let pulse = false; // blink phase for "working"
+let activeSlotsTimer = null;
+
+// OpenDeck delivers willAppear once per key, so coalesce the startup burst and
+// give the allocator the complete set of visible logical slots at once.
+function scheduleActiveSlots() {
+  clearTimeout(activeSlotsTimer);
+  activeSlotsTimer = setTimeout(() => {
+    const agents = [...instances.values()]
+      .filter((inst) => inst.action === `${PREFIX}.agent`);
+    const slots = agents.map((inst) => Number(inst.settings?.slot ?? 0));
+    const fallbackSlots = agents
+      .filter((inst) => usesUsageWhenEmpty(inst.settings))
+      .map((inst) => Number(inst.settings?.slot ?? 0));
+    state.setActiveSlots(slots, fallbackSlots)
+      .catch((error) => console.error('slot assignment failed', error));
+  }, 40);
+}
 
 // ---------- rendering ----------
-
-// Fit a label into two short lines (<= ~8 chars each) so OpenDeck's centered
-// title never overflows and clips. Breaks on a word boundary when possible.
-function wrapLabel(text, width = 8, maxLines = 2) {
-  const words = String(text).trim().split(/\s+/);
-  const lines = [];
-  let cur = '';
-  for (const w of words) {
-    if (!cur) cur = w;
-    else if ((cur + ' ' + w).length <= width) cur += ' ' + w;
-    else { lines.push(cur); cur = w; }
-    if (lines.length >= maxLines) break;
-    // a single word longer than width: hard-split it
-    while (cur.length > width && lines.length < maxLines) {
-      lines.push(cur.slice(0, width));
-      cur = cur.slice(width);
-    }
-  }
-  if (cur && lines.length < maxLines) lines.push(cur);
-  const out = lines.slice(0, maxLines);
-  // mark truncation if we ran out of room
-  if (out.length === maxLines) {
-    const used = out.join(' ').length;
-    if (used < String(text).trim().length) out[maxLines - 1] = `${out[maxLines - 1].slice(0, width - 1)}…`;
-  }
-  return out.join('\n');
-}
 
 function renderAgent(context, settings) {
   const slot = Number(settings?.slot ?? 0);
   const s = state.get()[slot] ?? null;
   if (!s) {
+    if (shouldShowUsageWhenEmpty(s, settings)) {
+      renderUsage(context, settings);
+      return;
+    }
     sd.setImage(context, icons.agentKey({ status: 'empty' }));
     sd.setTitle(context, `\n\n\n—`);
     return;
   }
   const dim = s.status === 'working' && pulse;
   sd.setImage(context, icons.agentKey({ status: s.status, dim }));
-  // OpenDeck center-clips titles past ~8 chars at the default font size, so
-  // wrap onto two short lines instead of one overflowing line.
-  sd.setTitle(context, `\n\n${wrapLabel(s.title || s.project)}`);
+  sd.setTitle(context, formatAgentLabel(s));
 }
 
 function renderCommand(context, settings) {
@@ -122,9 +118,9 @@ function renderModel(context, settings) {
 
 function renderUsage(context, settings) {
   const u = state.getUsageCached();
-  const pct = u ? u.percent : null;
-  sd.setImage(context, icons.usageKey({ percent: pct ?? 0 }));
-  sd.setTitle(context, `\n\n\n${pct == null ? '—' : `${pct}%`}`);
+  const remaining = u ? remainingPercent(u.usedPercent) : null;
+  sd.setImage(context, icons.usageKey({ remainingPercent: remaining ?? 0 }));
+  sd.setTitle(context, `\n\n\n${remaining == null ? '—' : `${remaining}%`}`);
 }
 
 function render(context) {
@@ -149,10 +145,27 @@ function renderAll(kinds = null) {
   }
 }
 
+function isUsageSurface(inst) {
+  if (inst.action === `${PREFIX}.usage`) return true;
+  if (inst.action !== `${PREFIX}.agent`) return false;
+  const session = state.get()[Number(inst.settings?.slot ?? 0)] ?? null;
+  return shouldShowUsageWhenEmpty(session, inst.settings);
+}
+
+function renderUsageSurfaces() {
+  for (const [context, inst] of instances) {
+    if (isUsageSurface(inst)) render(context);
+  }
+}
+
 // ---------- key behavior ----------
 
 async function pressAgent(context, settings) {
   const s = state.get()[Number(settings?.slot ?? 0)] ?? null;
+  if (shouldShowUsageWhenEmpty(s, settings)) {
+    await pressUsage(context);
+    return;
+  }
   if (s) {
     console.log(`agent key: opening codex://threads/${s.id}`);
     await openUri(`codex://threads/${s.id}`);
@@ -204,7 +217,7 @@ async function pressModel(context, settings) {
 async function pressUsage(context) {
   // refresh from disk and redraw
   await state.getUsage().catch(() => {});
-  renderAll(['usage']);
+  renderUsageSurfaces();
   sd.showOk(context);
 }
 
@@ -224,13 +237,18 @@ async function pressReasoning(context, settings, direction = 0) {
 sd.on('willAppear', (e) => {
   instances.set(e.context, { action: e.action, settings: e.payload?.settings ?? {} });
   console.log(`willAppear ${e.action} @ ${e.context} (${instances.size} instances)`);
+  if (e.action === `${PREFIX}.agent`) scheduleActiveSlots();
   render(e.context);
 });
 
 sd.on('willDisappear', (e) => {
   const inst = instances.get(e.context);
-  if (inst?.holding) releaseKeys(inst.holding).catch(() => {});
+  if (inst) {
+    clearTimeout(inst.holdTimeout);
+    releaseManagedHold(inst, releaseKeys).catch(() => {});
+  }
   instances.delete(e.context);
+  if (inst?.action === `${PREFIX}.agent`) scheduleActiveSlots();
 });
 
 // Push-to-talk: Codex dictation records only while Ctrl+Shift+D is held, so
@@ -242,14 +260,19 @@ sd.on('keyDown', async (e) => {
   if (!preset?.hold || inst.settings?.shell || inst.settings?.text) return;
   const keys = inst.settings?.keys || preset.keys;
   try {
-    await focusOrLaunch('codex');
-    await sleep(250);
-    await whileFocused(CODEX_CLS, () => holdKeys(keys));
-    inst.holding = keys;
+    const started = await startManagedHold(inst, keys, async () => {
+      const hadWindow = await focusOrLaunch('codex');
+      // An existing window has already been activated synchronously by KWin.
+      // Only a cold app launch needs time before the focus guard can succeed.
+      if (!hadWindow) await sleep(250);
+      await whileFocused(CODEX_CLS, () => holdKeys(keys));
+    }, releaseKeys);
+    if (!started) return;
     sd.setImage(e.context, icons.commandKey({ accent: '#e74c3c' })); // recording
     // Safety net: never leave the combo stuck if keyUp gets lost.
     inst.holdTimeout = setTimeout(() => {
-      if (inst.holding) { releaseKeys(inst.holding).catch(() => {}); inst.holding = null; render(e.context); }
+      releaseManagedHold(inst, releaseKeys).catch(() => {});
+      render(e.context);
     }, 120000);
   } catch (err) {
     console.error('ptt keyDown failed', err);
@@ -260,21 +283,24 @@ sd.on('keyDown', async (e) => {
 sd.on('didReceiveSettings', (e) => {
   const inst = instances.get(e.context);
   if (inst) inst.settings = e.payload?.settings ?? {};
+  if (inst?.action === `${PREFIX}.agent`) scheduleActiveSlots();
   render(e.context);
 });
 
 sd.on('keyUp', async (e) => {
   const inst = instances.get(e.context);
   if (!inst) return;
-  if (inst.holding) {
-    // end of a push-to-talk hold: release the shortcut, don't run a command
+  const kind = inst.action.slice(PREFIX.length + 1);
+  const preset = kind === 'command' ? COMMAND_PRESETS[inst.settings?.command ?? 'accept'] : null;
+  if (preset?.hold && !inst.settings?.shell && !inst.settings?.text) {
+    // End (or cancel a pending start) without falling through to a second key
+    // press. This also handles very quick taps safely.
     clearTimeout(inst.holdTimeout);
-    await releaseKeys(inst.holding).catch(() => {});
-    inst.holding = null;
+    inst.holdTimeout = null;
+    await releaseManagedHold(inst, releaseKeys).catch(() => {});
     render(e.context);
     return;
   }
-  const kind = inst.action.slice(PREFIX.length + 1);
   try {
     if (kind === 'agent') await pressAgent(e.context, inst.settings);
     else if (kind === 'command') await pressCommand(e.context, inst.settings);
@@ -299,25 +325,32 @@ sd.on('dialRotate', async (e) => {
 // Property inspectors ask for current session lists to populate dropdowns.
 sd.on('sendToPlugin', (e) => {
   if (e.payload?.event === 'getSessions') {
-    sd.sendToPropertyInspector(e.context, { event: 'sessions', sessions: state.get() });
+    sd.sendToPropertyInspector(e.context, { event: 'sessions', sessions: state.get().filter(Boolean) });
   }
 });
 
-state.on('change', () => renderAll(['agent']));
+state.on('change', () => {
+  renderAll(['agent']);
+  // If a departing tenth session just exposed the fallback, refresh now
+  // instead of showing a usage value cached before that slot was occupied.
+  if ([...instances.values()].some(isUsageSurface)) {
+    state.getUsage().then(renderUsageSurfaces).catch(() => {});
+  }
+});
 
 // Pulse "working" keys and refresh reasoning display (config may change externally).
 setInterval(() => {
   pulse = !pulse;
-  if (state.get().some((s) => s.status === 'working')) renderAll(['agent']);
+  if (state.get().some((s) => s?.status === 'working')) renderAll(['agent']);
 }, 900);
 
 // Refresh weekly usage periodically (only if a usage key is on screen).
 setInterval(async () => {
-  const hasUsage = [...instances.values()].some((i) => i.action === `${PREFIX}.usage`);
+  const hasUsage = [...instances.values()].some(isUsageSurface);
   if (!hasUsage) return;
   const before = JSON.stringify(state.getUsageCached());
   await state.getUsage().catch(() => {});
-  if (JSON.stringify(state.getUsageCached()) !== before) renderAll(['usage']);
+  if (JSON.stringify(state.getUsageCached()) !== before) renderUsageSurfaces();
 }, 60000);
 
 await sd.readyPromise;

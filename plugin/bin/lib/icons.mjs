@@ -1,6 +1,8 @@
 // Runtime key images (72x72 PNG data URIs). Text goes on top via setTitle,
-// so these render the status color field and simple glyphs.
+// so session keys use unobstructed status colors while other actions can use
+// simple glyphs.
 import { Canvas, hex } from './png.mjs';
+import { remainingUsageColor, remainingUsageSweep } from './usage.mjs';
 
 export const STATUS_COLORS = {
   idle: '#3a3f4b',
@@ -22,41 +24,13 @@ function base(bg) {
   return c;
 }
 
-/** Agent status key: colored field + status glyph. */
+/** Agent status key: plain colored field so its title remains unobstructed. */
 export function agentKey({ status = 'empty', dim = false } = {}) {
   const color = STATUS_COLORS[status] ?? STATUS_COLORS.idle;
   let [r, g, b] = hex(color);
   if (dim) { r = Math.round(r * 0.55); g = Math.round(g * 0.55); b = Math.round(b * 0.55); }
   const c = base('#111318');
   c.fillRoundRect(3, 3, S - 6, S - 6, 12, [r, g, b, 255]);
-  const ink = status === 'idle' || status === 'empty' ? hex('#8a8f9c') : hex('#111318');
-  const cx = S / 2, cy = 30;
-  if (status === 'working') {
-    // three dots
-    c.fillCircle(cx - 14, cy, 4, ink);
-    c.fillCircle(cx, cy, 4, ink);
-    c.fillCircle(cx + 14, cy, 4, ink);
-  } else if (status === 'needs_input') {
-    // hollow circle + dot
-    c.fillCircle(cx, cy - 4, 9, ink);
-    c.fillCircle(cx, cy - 4, 5, [r, g, b, 255]);
-    c.fillCircle(cx, cy + 12, 3, ink);
-  } else if (status === 'done') {
-    // check mark from rects
-    for (let i = 0; i < 7; i++) c.fillRect(cx - 12 + i, cy - 2 + i, 3, 3, ink);
-    for (let i = 0; i < 12; i++) c.fillRect(cx - 6 + i, cy + 4 - i, 3, 3, ink);
-  } else if (status === 'error') {
-    for (let i = 0; i < 16; i++) {
-      c.fillRect(cx - 8 + i, cy - 8 + i, 3, 3, ink);
-      c.fillRect(cx + 5 - i, cy - 8 + i, 3, 3, ink);
-    }
-  } else if (status === 'empty') {
-    c.fillCircle(cx, cy, 3, hex('#3a3f4b'));
-  } else {
-    // idle: small hollow circle
-    c.fillCircle(cx, cy, 8, ink);
-    c.fillCircle(cx, cy, 5, [r, g, b, 255]);
-  }
   return c.toDataURI();
 }
 
@@ -81,13 +55,13 @@ export function modelKey() {
   return c.toDataURI();
 }
 
-/** Weekly usage: ring gauge filled to percent, color-coded. */
-export function usageKey({ percent = 0 } = {}) {
+/** Weekly capacity remaining: ring gauge filled to percent, color-coded. */
+export function usageKey({ remainingPercent = 0 } = {}) {
   const c = base('#262a34');
   const cx = S / 2, cy = 28, rO = 20, rI = 13;
   c.ringSegment(cx, cy, rO, rI, 0, 360, hex('#3a3f4b'));
-  const col = percent >= 85 ? '#e74c3c' : percent >= 60 ? '#f7c744' : '#27ae60';
-  const sweep = Math.min(360, Math.max(0, Math.round(3.6 * percent)));
+  const col = remainingUsageColor(remainingPercent);
+  const sweep = remainingUsageSweep(remainingPercent);
   if (sweep > 0) c.ringSegment(cx, cy, rO, rI, 0, sweep, hex(col));
   return c.toDataURI();
 }
@@ -134,7 +108,7 @@ export function manifestIcon(kind, size = 144) {
     }
   } else if (kind === 'usage') {
     c.ringSegment(cx, cy, 22 * u, 14 * u, 0, 360, hex('#3a3f4b'));
-    c.ringSegment(cx, cy, 22 * u, 14 * u, 0, 130, hex('#27ae60'));
+    c.ringSegment(cx, cy, 22 * u, 14 * u, 0, 270, hex('#27ae60'));
   }
   return c.toPNG();
 }

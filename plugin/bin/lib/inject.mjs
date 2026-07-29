@@ -3,6 +3,7 @@
 // paste so unicode and length are never a problem.
 import { execFile } from 'node:child_process';
 import { writeFile, unlink } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -229,8 +230,73 @@ export async function whileFocused(cls, fn) {
   return fn();
 }
 
-/** Open a deep link (claude:// or codex://) via the desktop's URI handlers. */
-export function openUri(uri) {
+const SAFE_SOCKET_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Match Codex Desktop's Linux launch-action socket lookup.  Sending a URI to
+ * this socket reaches the running Electron instance directly; spawning a new
+ * desktop process through xdg-open can leave a headless orphan behind.
+ */
+export function codexLaunchActionSocketPath(env = process.env) {
+  const configuredAppId = env.CODEX_LINUX_APP_ID || env.CODEX_APP_ID || 'codex-desktop';
+  const appId = SAFE_SOCKET_SEGMENT.test(configuredAppId) ? configuredAppId : 'codex-desktop';
+  const candidateInstanceId = env.CODEX_LINUX_INSTANCE_ID?.trim();
+  const instanceId = candidateInstanceId && SAFE_SOCKET_SEGMENT.test(candidateInstanceId)
+    ? candidateInstanceId
+    : null;
+  const runtimeDir = env.XDG_RUNTIME_DIR?.trim();
+
+  if (runtimeDir) {
+    return instanceId
+      ? join(runtimeDir, appId, 'instances', instanceId, 'launch-action.sock')
+      : join(runtimeDir, appId, 'launch-action.sock');
+  }
+
+  const stateHome = env.XDG_STATE_HOME?.trim()
+    || (env.HOME?.trim() ? join(env.HOME, '.local', 'state') : null);
+  if (!stateHome) return null;
+  return instanceId
+    ? join(stateHome, appId, 'instances', instanceId, 'launch-action.sock')
+    : join(stateHome, appId, 'launch-action.sock');
+}
+
+/** Send a Codex deep link to the already-running Linux desktop app. */
+export function sendCodexLaunchAction(uri, {
+  socketPath = codexLaunchActionSocketPath(),
+  timeoutMs = 1000,
+} = {}) {
+  if (!socketPath || !uri.startsWith('codex://')) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let response = '';
+    const socket = createConnection(socketPath);
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(ok);
+    };
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+
+    socket.setEncoding('utf8');
+    socket.once('connect', () => {
+      socket.end(`${JSON.stringify({ argv: [uri] })}\n`);
+    });
+    socket.on('data', (chunk) => {
+      response += chunk;
+      if (response.includes('\n')) finish(response.trim() === 'ok');
+    });
+    socket.once('end', () => finish(response.trim() === 'ok'));
+    socket.once('error', () => finish(false));
+  });
+}
+
+/** Open a deep link, preferring Codex Desktop's running-instance socket. */
+export async function openUri(uri, { allowFallback = true } = {}) {
+  if (uri.startsWith('codex://') && await sendCodexLaunchAction(uri)) return true;
+  if (uri.startsWith('codex://') && !allowFallback) return false;
   return new Promise((resolve) => {
     execFile('xdg-open', [uri], { timeout: 10000 }, (err) => resolve(!err));
   });

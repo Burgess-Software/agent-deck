@@ -6,7 +6,7 @@ import { AgentState } from './lib/state.mjs';
 import { shouldShowUsageWhenEmpty, usesUsageWhenEmpty } from './lib/agent-display.mjs';
 import { formatAgentLabel, wrapLabel } from './lib/labels.mjs';
 import * as icons from './lib/icons.mjs';
-import { focusOrLaunch, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
+import { focusOrLaunch, focusWindow, sendKeys, pasteText, runShell, openUri, whileFocused, holdKeys, releaseKeys, APP_WINDOW_CLASS } from './lib/inject.mjs';
 import { releaseManagedHold, startManagedHold } from './lib/ptt.mjs';
 import { remainingPercent } from './lib/usage.mjs';
 
@@ -166,12 +166,20 @@ async function pressAgent(context, settings) {
     await pressUsage(context);
     return;
   }
+  // Never use xdg-open to target an existing Codex window. On Linux that can
+  // spawn a second Electron process which unlinks the live launch-action
+  // socket before exiting, making every later deck press appear to do nothing.
+  const hadWindow = s ? await focusWindow(CODEX_CLS) : false;
   if (s) {
-    console.log(`agent key: opening codex://threads/${s.id}`);
-    await openUri(`codex://threads/${s.id}`);
-    await sleep(400);
+    const uri = `codex://threads/${s.id}`;
+    console.log(`agent key: opening ${uri}${hadWindow ? ' via launch action' : ''}`);
+    const opened = await openUri(uri, { allowFallback: !hadWindow });
+    if (!opened) {
+      throw new Error('Codex Desktop launch-action socket is unavailable; restart Codex Desktop once to restore it');
+    }
+    await sleep(hadWindow ? 150 : 400);
   }
-  await focusOrLaunch('codex');
+  if (!hadWindow) await focusOrLaunch('codex');
 }
 
 async function pressCommand(context, settings) {

@@ -2,8 +2,9 @@
 //
 // Sessions are discovered by polling ~/.codex/sessions rollout files. Codex
 // writes a NEW rollout file per resume with the SAME session_id, so files are
-// deduped by id keeping the newest. A session whose file grew recently is
-// "working"; a working session that goes quiet transitions to "done". The
+// deduped by id keeping the newest. Current rollouts contain explicit task
+// lifecycle events; those are authoritative so a quiet, long-running task does
+// not look complete. File recency remains a fallback for legacy rollouts. The
 // notify hook (config.toml) makes "done" immediate and flags approvals as
 // "needs_input".
 import { EventEmitter } from 'node:events';
@@ -21,7 +22,11 @@ const CODEX_SESSION_INDEX = path.join(os.homedir(), '.codex/session_index.jsonl'
 const SLOT_STATE = path.join(STATE_DIR, 'state/session-slots.json');
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // hide sessions idle > 12h
-const CODEX_ACTIVE_WINDOW_MS = 15 * 1000;   // file touched this recently = working
+const CODEX_ACTIVE_WINDOW_MS = 15 * 1000;   // legacy rollout fallback only
+const CODEX_DONE_WINDOW_MS = 5 * 60 * 1000;
+const CODEX_NOTIFY_SLOP_MS = 2 * 1000;
+const CODEX_READ_CHUNK_BYTES = 64 * 1024;
+const CODEX_MAX_INCREMENTAL_BYTES = 8 * 1024 * 1024;
 const POLL_MS = 3000;
 
 function sameNumberSet(a, b) {
@@ -56,6 +61,7 @@ export class AgentState extends EventEmitter {
     fs.mkdirSync(CODEX_STATE, { recursive: true });
     this.codexMeta = new Map();     // file -> {id, cwd}
     this.codexStatus = new Map();   // id -> {status, ts}
+    this.codexLifecycle = new Map(); // file -> incremental task lifecycle state
     this.threadTitles = new Map();  // id -> Codex-generated chat title
     this.sessionIndexStamp = '';
     this.discoveredSessions = [];
@@ -196,33 +202,31 @@ export class AgentState extends EventEmitter {
       let meta = this.codexMeta.get(file);
       if (!meta) {
         meta = await readCodexMeta(file);
+        // Spawned agents replay parent history in their own rollout. They are
+        // implementation details of a top-level chat, not independent deck
+        // sessions, and must not replace the parent's status source.
+        if (meta?.isSubagent) this.codexMeta.set(file, meta);
         // A just-created rollout may not contain its first user_message yet.
         // Retry those files until either the fallback snippet or the generated
         // index title exists instead of permanently caching the project name.
-        if (meta?.hasSnippet || threadTitles.has(meta?.id)) this.codexMeta.set(file, meta);
+        else if (meta?.hasSnippet || threadTitles.has(meta?.id)) this.codexMeta.set(file, meta);
       }
-      if (!meta) continue;
+      if (!meta || meta.isSubagent) continue;
       const prev = newestById.get(meta.id);
       if (!prev || stat.mtimeMs > prev.stat.mtimeMs) newestById.set(meta.id, { meta, stat, file });
     }
 
     const out = [];
     for (const { meta, stat, file } of newestById.values()) {
-      const age = Date.now() - stat.mtimeMs;
       const prev = this.codexStatus.get(meta.id);
       const notified = notifyState.get(meta.id) || notifyState.get('latest');
-      let status;
-      if (age < CODEX_ACTIVE_WINDOW_MS) {
-        status = 'working';
-      } else if (notified?.status === 'needs_input' && notified.ts > stat.mtimeMs - 2000) {
-        status = 'needs_input';
-      } else if (prev?.status === 'working' || (notified?.status === 'done' && Date.now() - notified.ts < 5 * 60 * 1000)) {
-        status = prev?.status === 'working' ? 'done' : notified.status;
-      } else if (prev?.status === 'done' && Date.now() - prev.ts < 5 * 60 * 1000) {
-        status = 'done';
-      } else {
-        status = 'idle';
-      }
+      const lifecycle = await this.readCodexLifecycle(file, stat);
+      const status = resolveCodexStatus({
+        lifecycle,
+        fileMtimeMs: stat.mtimeMs,
+        notified,
+        previous: prev,
+      });
       if (status !== prev?.status) this.codexStatus.set(meta.id, { status, ts: Date.now() });
       out.push({
         id: meta.id,
@@ -236,6 +240,38 @@ export class AgentState extends EventEmitter {
     }
     out.sort((a, b) => b.ts - a.ts);
     return out;
+  }
+
+  async readCodexLifecycle(file, stat) {
+    const cached = this.codexLifecycle.get(file);
+    if (cached && stat.size >= cached.observedSize) {
+      if (stat.size === cached.observedSize) return cached.lifecycle;
+
+      // Normally only a few new JSONL rows need parsing. If the plugin was
+      // asleep through a very large append, finding the newest lifecycle event
+      // backwards is both cheaper and sufficient.
+      if (stat.size - cached.offset <= CODEX_MAX_INCREMENTAL_BYTES) {
+        try {
+          const appended = await readCompleteAppend(file, cached.offset, stat.size);
+          const next = {
+            lifecycle: parseCodexLifecycle(appended.text, cached.lifecycle),
+            offset: appended.offset,
+            observedSize: stat.size,
+          };
+          this.codexLifecycle.set(file, next);
+          return next.lifecycle;
+        } catch { /* fall through to a fresh backwards read */ }
+      }
+    }
+
+    try {
+      const snapshot = await readCodexLifecycleSnapshot(file, stat.size);
+      const next = { ...snapshot, observedSize: stat.size };
+      this.codexLifecycle.set(file, next);
+      return next.lifecycle;
+    } catch {
+      return null;
+    }
   }
 
   async readSessionTitles() {
@@ -265,6 +301,154 @@ export function parseSessionTitles(text) {
     } catch { /* ignore a partial final line while Codex is writing */ }
   }
   return titles;
+}
+
+function lifecycleFromEntry(entry) {
+  if (entry?.type !== 'event_msg') return null;
+  const event = entry.payload?.type;
+  if (event !== 'task_started' && event !== 'task_complete' && event !== 'turn_aborted') return null;
+  const parsedTs = Date.parse(entry.timestamp);
+  return {
+    status: event === 'task_started' ? 'working' : 'done',
+    event,
+    turnId: entry.payload?.turn_id || null,
+    ts: Number.isFinite(parsedTs) ? parsedTs : null,
+  };
+}
+
+/** Parse lifecycle rows in chronological order, optionally continuing a cache. */
+export function parseCodexLifecycle(text, initial = null) {
+  let lifecycle = initial;
+  for (const line of String(text).split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      lifecycle = lifecycleFromEntry(JSON.parse(line)) || lifecycle;
+    } catch { /* ignore a partial row while Codex is writing */ }
+  }
+  return lifecycle;
+}
+
+function latestLifecycleInText(text) {
+  const lines = String(text).split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].trim()) continue;
+    try {
+      const lifecycle = lifecycleFromEntry(JSON.parse(lines[i]));
+      if (lifecycle) return lifecycle;
+    } catch { /* keep looking before a malformed/partial row */ }
+  }
+  return null;
+}
+
+async function readInto(handle, buffer, position) {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, position + offset);
+    if (!bytesRead) break;
+    offset += bytesRead;
+  }
+  return offset === buffer.length ? buffer : buffer.subarray(0, offset);
+}
+
+async function lastCompleteLineOffset(handle, size) {
+  let end = size;
+  while (end > 0) {
+    const start = Math.max(0, end - CODEX_READ_CHUNK_BYTES);
+    const chunk = await readInto(handle, Buffer.allocUnsafe(end - start), start);
+    const newline = chunk.lastIndexOf(0x0a);
+    if (newline >= 0) return start + newline + 1;
+    end = start;
+  }
+  return 0;
+}
+
+// On first sight of a rollout, search backwards until the newest lifecycle row
+// is found. Completed sessions usually take one chunk; long active turns may
+// put task_started megabytes behind EOF, so a fixed-size tail is insufficient.
+async function readCodexLifecycleSnapshot(file, size) {
+  const handle = await fsp.open(file, 'r');
+  try {
+    const offset = await lastCompleteLineOffset(handle, size);
+    let end = offset;
+    let leading = Buffer.alloc(0);
+    while (end > 0) {
+      const start = Math.max(0, end - CODEX_READ_CHUNK_BYTES);
+      const chunk = await readInto(handle, Buffer.allocUnsafe(end - start), start);
+      const combined = leading.length ? Buffer.concat([chunk, leading]) : chunk;
+      const firstNewline = combined.indexOf(0x0a);
+      if (start === 0 || firstNewline >= 0) {
+        const complete = start === 0 ? combined : combined.subarray(firstNewline + 1);
+        const lifecycle = latestLifecycleInText(complete.toString('utf8'));
+        if (lifecycle) return { lifecycle, offset };
+        leading = start === 0 ? Buffer.alloc(0) : combined.subarray(0, firstNewline);
+      } else {
+        leading = combined;
+      }
+      end = start;
+    }
+    return { lifecycle: null, offset };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Read the newest complete lifecycle row from a rollout file. */
+export async function readCodexLifecycle(file) {
+  const stat = await fsp.stat(file);
+  return (await readCodexLifecycleSnapshot(file, stat.size)).lifecycle;
+}
+
+async function readCompleteAppend(file, start, end) {
+  if (end <= start) return { text: '', offset: start };
+  const handle = await fsp.open(file, 'r');
+  try {
+    const data = await readInto(handle, Buffer.allocUnsafe(end - start), start);
+    const newline = data.lastIndexOf(0x0a);
+    if (newline < 0) return { text: '', offset: start };
+    return {
+      text: data.subarray(0, newline + 1).toString('utf8'),
+      offset: start + newline + 1,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Resolve a deck color from authoritative lifecycle data, then legacy hints. */
+export function resolveCodexStatus({
+  lifecycle = null,
+  fileMtimeMs,
+  notified = null,
+  previous = null,
+  now = Date.now(),
+}) {
+  const mtime = Number(fileMtimeMs) || 0;
+  const notifyTs = notified?.ts == null ? Number.NaN : Number(notified.ts);
+  const lifecycleTs = lifecycle?.ts == null ? Number.NaN : Number(lifecycle.ts);
+  const notificationIsCurrent = Number.isFinite(notifyTs)
+    && notifyTs >= mtime - CODEX_NOTIFY_SLOP_MS
+    && (!Number.isFinite(lifecycleTs) || notifyTs >= lifecycleTs);
+
+  // Approval notifications have no equivalent lifecycle terminal row.
+  if (notificationIsCurrent && notified.status === 'needs_input') return 'needs_input';
+  // Preserve immediate completion if the hook wins a race with the final row.
+  if (notificationIsCurrent && notified.status === 'done') {
+    return now - notifyTs < CODEX_DONE_WINDOW_MS ? 'done' : 'idle';
+  }
+
+  if (lifecycle?.status === 'working') return 'working';
+  if (lifecycle?.status === 'done') {
+    const completedAt = Number.isFinite(lifecycleTs) ? lifecycleTs : mtime;
+    return now - completedAt < CODEX_DONE_WINDOW_MS ? 'done' : 'idle';
+  }
+
+  // Older rollouts lack task_started/task_complete. Keep their original
+  // activity heuristic, without allowing it to override modern lifecycle.
+  const age = now - mtime;
+  if (age < CODEX_ACTIVE_WINDOW_MS) return 'working';
+  if (previous?.status === 'working') return 'done';
+  if (previous?.status === 'done' && now - previous.ts < CODEX_DONE_WINDOW_MS) return 'done';
+  return 'idle';
 }
 
 // Parse the JSON object that starts at the first "{" at/after `from`.
@@ -360,6 +544,7 @@ export function readCodexMeta(file) {
   return new Promise((resolve) => {
     const fallbackId = path.basename(file, '.jsonl').replace(/^rollout-[\dT-]+-(?=[0-9a-f])/, '');
     let id = '', cwd = '', gitProject = null, snippet = '', lines = 0, settled = false;
+    let sawSessionMeta = false, isSubagent = false;
     const stream = fs.createReadStream(file, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
     const finish = () => {
@@ -369,7 +554,7 @@ export function readCodexMeta(file) {
       stream.destroy();
       const project = gitProject || (cwd ? path.basename(cwd) : 'thread');
       const title = snippet || project;
-      resolve({ id: id || fallbackId, cwd, project, title, hasSnippet: !!snippet });
+      resolve({ id: id || fallbackId, cwd, project, title, hasSnippet: !!snippet, isSubagent });
     };
     rl.on('line', (line) => {
       if (settled) return;
@@ -377,10 +562,18 @@ export function readCodexMeta(file) {
       let o;
       try { o = JSON.parse(line); } catch { return; }
       const p = o.payload ?? o;
-      if (o.type === 'session_meta' || p.session_id) {
-        id = p.session_id || p.id || id;
+      // A subagent rollout embeds copied parent history, including another
+      // session_meta row. Only the first row describes this rollout itself.
+      if (o.type === 'session_meta' && !sawSessionMeta) {
+        sawSessionMeta = true;
+        id = p.id || p.session_id || id;
         cwd = p.cwd || cwd;
         gitProject = projectFromGit(p.git);
+        isSubagent = p.source === 'subagent'
+          || !!p.source?.subagent
+          || p.thread_source === 'subagent'
+          || !!p.thread_source?.subagent;
+        if (isSubagent) return finish();
       }
       if (!snippet && o.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') {
         snippet = cleanSnippet(p.message);

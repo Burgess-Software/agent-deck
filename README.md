@@ -16,10 +16,12 @@ for Linux (OpenDeck), controlling the Codex desktop app.
 
 ## How it works
 
-- **Thread status** comes from polling `~/.codex/sessions/` rollout files (recent write =
-  working, went quiet = done) plus a `notify` hook in `~/.codex/config.toml` for instant
-  turn-complete / approval events. Rollout files are deduped by session id — Codex writes
-  a new file per resume of the same thread.
+- **Thread status** comes from polling `~/.codex/sessions/` rollout files. Explicit
+  `task_started`, `task_complete`, and `turn_aborted` events drive working/done state, so
+  long quiet tool calls stay working; file recency is only a fallback for older rollouts.
+  A `notify` hook in `~/.codex/config.toml` makes turn-complete / approval events immediate.
+  Top-level rollout files are deduped by session id — Codex writes a new file per resume
+  of the same thread, while spawned subagent rollouts are intentionally hidden.
 - **Thread slots stay stable** while activity changes: existing chats update in place instead
   of being re-sorted on every rollout write. Assignments survive plugin restarts. A new or
   resumed chat fills a vacancy, or replaces only the least-recent slot when the deck is full.

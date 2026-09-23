@@ -15,6 +15,8 @@ export class StreamDeck {
     this.uuid = pluginUUID;
     this.info = info ? JSON.parse(info) : {};
     this.handlers = new Map();
+    this.images = new Map();
+    this.titles = new Map();
     this.readyPromise = new Promise((resolve, reject) => {
       this.ws = new WebSocket(`ws://127.0.0.1:${port}`);
       this.ws.addEventListener('open', () => {
@@ -44,15 +46,28 @@ export class StreamDeck {
   }
 
   send(obj) {
-    if (this.ws.readyState === 1) this.ws.send(JSON.stringify(obj));
+    if (this.ws.readyState !== 1) return false;
+    this.ws.send(JSON.stringify(obj));
+    return true;
   }
 
   setImage(context, image) {
-    this.send({ event: 'setImage', context, payload: { image, target: 0 } });
+    if (this.images.get(context) === image) return;
+    if (this.send({ event: 'setImage', context, payload: { image, target: 0 } })) {
+      this.images.set(context, image);
+    }
   }
 
   setTitle(context, title) {
-    this.send({ event: 'setTitle', context, payload: { title, target: 0 } });
+    if (this.titles.get(context) === title) return;
+    if (this.send({ event: 'setTitle', context, payload: { title, target: 0 } })) {
+      this.titles.set(context, title);
+    }
+  }
+
+  clearContext(context) {
+    this.images.delete(context);
+    this.titles.delete(context);
   }
 
   setSettings(context, settings) {

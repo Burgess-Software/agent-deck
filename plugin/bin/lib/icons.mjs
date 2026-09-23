@@ -16,6 +16,7 @@ export const STATUS_COLORS = {
 const ACCENT = '#e8e8e3'; // Codex off-white
 
 const S = 72;
+const agentImages = new Map();
 
 function base(bg) {
   const c = new Canvas(S, S);
@@ -26,12 +27,16 @@ function base(bg) {
 
 /** Agent status key: plain colored field so its title remains unobstructed. */
 export function agentKey({ status = 'empty', dim = false } = {}) {
+  const key = `${status}:${dim}`;
+  if (agentImages.has(key)) return agentImages.get(key);
   const color = STATUS_COLORS[status] ?? STATUS_COLORS.idle;
   let [r, g, b] = hex(color);
   if (dim) { r = Math.round(r * 0.55); g = Math.round(g * 0.55); b = Math.round(b * 0.55); }
   const c = base('#111318');
   c.fillRoundRect(3, 3, S - 6, S - 6, 12, [r, g, b, 255]);
-  return c.toDataURI();
+  const image = c.toDataURI();
+  agentImages.set(key, image);
+  return image;
 }
 
 /** Command / skill key: dark tile + accent bar. */

@@ -243,6 +243,7 @@ async function pressReasoning(context, settings, direction = 0) {
 // ---------- event wiring ----------
 
 sd.on('willAppear', (e) => {
+  sd.clearContext(e.context);
   instances.set(e.context, { action: e.action, settings: e.payload?.settings ?? {} });
   console.log(`willAppear ${e.action} @ ${e.context} (${instances.size} instances)`);
   if (e.action === `${PREFIX}.agent`) scheduleActiveSlots();
@@ -256,6 +257,7 @@ sd.on('willDisappear', (e) => {
     releaseManagedHold(inst, releaseKeys).catch(() => {});
   }
   instances.delete(e.context);
+  sd.clearContext(e.context);
   if (inst?.action === `${PREFIX}.agent`) scheduleActiveSlots();
 });
 

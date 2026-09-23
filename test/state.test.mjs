@@ -9,6 +9,7 @@ import {
   parseSessionTitles,
   readCodexLifecycle,
   readCodexMeta,
+  readNotifyState,
   resolveCodexStatus,
 } from '../plugin/bin/lib/state.mjs';
 
@@ -19,6 +20,22 @@ function lifecycle(type, timestamp, turnId = 'turn-id') {
     payload: { type, turn_id: turnId },
   });
 }
+
+test('notify reads current session records and the latest fallback only', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'agentdeck-notify-'));
+  try {
+    await writeFile(path.join(dir, 'current.json'), JSON.stringify({ status: 'done', ts: 123 }));
+    await writeFile(path.join(dir, 'latest.json'), JSON.stringify({ status: 'needs_input', ts: 456 }));
+    await writeFile(path.join(dir, 'historical.json'), JSON.stringify({ status: 'done', ts: 789 }));
+    const state = await readNotifyState(['current', 'missing', '../outside'], dir);
+    assert.deepEqual([...state], [
+      ['current', { status: 'done', ts: 123 }],
+      ['latest', { status: 'needs_input', ts: 456 }],
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('session title index uses the newest valid title for each chat', () => {
   const titles = parseSessionTitles([

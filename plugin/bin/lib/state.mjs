@@ -175,18 +175,6 @@ export class AgentState extends EventEmitter {
       }
     }
 
-    // Notify-hook state (id -> done/needs_input timestamps).
-    const notifyState = new Map();
-    try {
-      for (const f of await fsp.readdir(CODEX_STATE)) {
-        if (!f.endsWith('.json')) continue;
-        try {
-          const data = JSON.parse(await fsp.readFile(path.join(CODEX_STATE, f), 'utf8'));
-          notifyState.set(f.replace(/\.json$/, ''), data);
-        } catch { /* skip */ }
-      }
-    } catch { /* skip */ }
-
     // Codex appends generated/renamed chat titles here. Check it on every poll
     // so a title that arrives just after thread creation appears immediately;
     // the reader only reparses when its mtime or size changes.
@@ -215,6 +203,7 @@ export class AgentState extends EventEmitter {
       const prev = newestById.get(meta.id);
       if (!prev || stat.mtimeMs > prev.stat.mtimeMs) newestById.set(meta.id, { meta, stat, file });
     }
+    const notifyState = await readNotifyState(newestById.keys());
 
     const out = [];
     for (const { meta, stat, file } of newestById.values()) {
@@ -286,6 +275,18 @@ export class AgentState extends EventEmitter {
     } catch { /* keep the last good snapshot; rollout snippets remain a fallback */ }
     return this.threadTitles;
   }
+}
+
+/** Only current sessions can use a notify record; old records may number in the thousands. */
+export async function readNotifyState(ids, dir = CODEX_STATE) {
+  const state = new Map();
+  for (const id of new Set([...ids, 'latest'])) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) continue;
+    try {
+      state.set(id, JSON.parse(await fsp.readFile(path.join(dir, `${id}.json`), 'utf8')));
+    } catch { /* missing or partially written record */ }
+  }
+  return state;
 }
 
 // session_index.jsonl is append-only. Later entries win so manual renames and
